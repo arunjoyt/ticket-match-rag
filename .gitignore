@@ -1,0 +1,12 @@
+PROJECT_BRIEF.md
+.env
+__pycache__/
+*.pyc
+.venv/
+venv/
+compose.log
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.DS_Store

@@ -1,0 +1,164 @@
+{
+  "clusters": [
+    {
+      "id": "vpn-crash-after-update",
+      "ticket_names": [
+        "0002",
+        "0003",
+        "0004",
+        "0005"
+      ]
+    },
+    {
+      "id": "shared-drive-access-denied-after-reset",
+      "ticket_names": [
+        "0006",
+        "0007",
+        "0008",
+        "0009"
+      ]
+    },
+    {
+      "id": "calendar-sync-not-updating",
+      "ticket_names": [
+        "0010",
+        "0011",
+        "0012",
+        "0013"
+      ]
+    },
+    {
+      "id": "printer-jobs-stuck-after-update",
+      "ticket_names": [
+        "0014",
+        "0015",
+        "0016",
+        "0017"
+      ]
+    },
+    {
+      "id": "sso-login-redirect-loop",
+      "ticket_names": [
+        "0018",
+        "0019",
+        "0020",
+        "0021"
+      ]
+    },
+    {
+      "id": "slack-notifications-not-showing",
+      "ticket_names": [
+        "0022",
+        "0023",
+        "0024",
+        "0025"
+      ]
+    },
+    {
+      "id": "laptop-wont-wake-from-sleep",
+      "ticket_names": [
+        "0026",
+        "0027",
+        "0028",
+        "0029"
+      ]
+    },
+    {
+      "id": "password-reset-email-not-received",
+      "ticket_names": [
+        "0030",
+        "0031",
+        "0032",
+        "0033"
+      ]
+    }
+  ],
+  "distractors": [
+    {
+      "ticket_name": "0034",
+      "adjacent_to": "vpn-crash-after-update"
+    },
+    {
+      "ticket_name": "0035",
+      "adjacent_to": "shared-drive-access-denied-after-reset"
+    },
+    {
+      "ticket_name": "0036",
+      "adjacent_to": "calendar-sync-not-updating"
+    },
+    {
+      "ticket_name": "0037",
+      "adjacent_to": "printer-jobs-stuck-after-update"
+    },
+    {
+      "ticket_name": "0038",
+      "adjacent_to": "sso-login-redirect-loop"
+    },
+    {
+      "ticket_name": "0039",
+      "adjacent_to": "slack-notifications-not-showing"
+    },
+    {
+      "ticket_name": "0040",
+      "adjacent_to": "laptop-wont-wake-from-sleep"
+    },
+    {
+      "ticket_name": "0041",
+      "adjacent_to": "password-reset-email-not-received"
+    },
+    {
+      "ticket_name": "0042",
+      "adjacent_to": null
+    },
+    {
+      "ticket_name": "0043",
+      "adjacent_to": null
+    },
+    {
+      "ticket_name": "0044",
+      "adjacent_to": null
+    },
+    {
+      "ticket_name": "0045",
+      "adjacent_to": null
+    },
+    {
+      "ticket_name": "0046",
+      "adjacent_to": null
+    },
+    {
+      "ticket_name": "0047",
+      "adjacent_to": null
+    },
+    {
+      "ticket_name": "0048",
+      "adjacent_to": null
+    },
+    {
+      "ticket_name": "0049",
+      "adjacent_to": null
+    }
+  ],
+  "demo_queries": [
+    {
+      "ticket_name": "0050",
+      "expected_cluster": "vpn-crash-after-update"
+    },
+    {
+      "ticket_name": "0051",
+      "expected_cluster": "printer-jobs-stuck-after-update"
+    },
+    {
+      "ticket_name": "0052",
+      "expected_cluster": "password-reset-email-not-received"
+    },
+    {
+      "ticket_name": "0053",
+      "expected_cluster": null
+    },
+    {
+      "ticket_name": "0054",
+      "expected_cluster": null
+    }
+  ]
+}
