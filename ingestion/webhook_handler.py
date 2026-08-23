@@ -1,0 +1,88 @@
+"""Incremental re-indexing via Frappe webhooks.
+
+POST /webhook/helpdesk -- verifies HMAC-SHA256 signature, fetches the updated
+ticket, deletes its existing Qdrant point, and re-indexes if still eligible.
+
+Fails closed: if WEBHOOK_SECRET is unset, requests are rejected outright,
+never validated against an empty-string key. See
+contract_intelligence_carryforward memory, item 2.
+
+Only builds and verifies the webhook path here; wiring live webhook delivery
+from the Helpdesk dev instance to this service is deployment work, deferred
+to a later phase.
+"""
+
+from __future__ import annotations
+
+import base64
+import hashlib
+import hmac
+from collections.abc import Callable
+from typing import Any
+
+from fastapi import APIRouter, HTTPException, Request
+
+from ingestion.embedder import Embedder, match_text
+from ingestion.helpdesk_client import HelpdeskClient
+from retrieval.vector_store import VectorStore
+
+SIGNATURE_HEADER = "X-Frappe-Webhook-Signature"
+
+
+def verify_signature(body: bytes, signature: str | None, secret: str | None) -> None:
+    if not secret:
+        raise HTTPException(status_code=500, detail="Webhook secret not configured")
+    if not signature:
+        raise HTTPException(status_code=401, detail="Missing webhook signature")
+    expected = base64.b64encode(
+        hmac.new(secret.encode(), body, hashlib.sha256).digest()
+    ).decode()
+    if not hmac.compare_digest(expected, signature):
+        raise HTTPException(status_code=401, detail="Invalid webhook signature")
+
+
+def prepare_doc_for_indexing(ticket: dict, embedder: Embedder) -> tuple[list[float], dict]:
+    text = match_text(ticket["subject"], ticket["description"])
+    vector = embedder.embed_query(text)
+    payload = {
+        "ticket_name": ticket["name"],
+        "subject": ticket["subject"],
+        "description": ticket["description"],
+        "resolution_details": ticket.get("resolution_details", ""),
+        "match_text": text,
+    }
+    return vector, payload
+
+
+def create_webhook_router(
+    helpdesk_client: HelpdeskClient,
+    embedder: Embedder,
+    vector_store: VectorStore,
+    rebuild_bm25: Callable[[], None],
+    webhook_secret: str | None,
+) -> APIRouter:
+    router = APIRouter()
+
+    @router.post("/webhook/helpdesk")
+    async def handle_webhook(request: Request) -> dict[str, Any]:
+        body = await request.body()
+        verify_signature(body, request.headers.get(SIGNATURE_HEADER), webhook_secret)
+
+        payload = await request.json()
+        ticket_name = payload.get("name")
+        if not ticket_name:
+            raise HTTPException(status_code=400, detail="Missing ticket name in payload")
+
+        ticket = helpdesk_client.get_ticket(ticket_name)
+        vector_store.delete_by_ticket_name(ticket_name)
+
+        if ticket.get("resolution_details"):
+            vector, doc_payload = prepare_doc_for_indexing(ticket, embedder)
+            vector_store.upsert_ticket(ticket_name, vector, doc_payload)
+            rebuild_bm25()
+            return {"status": "indexed", "ticket_name": ticket_name}
+
+        rebuild_bm25()
+        return {"status": "removed", "ticket_name": ticket_name}
+
+    return router
