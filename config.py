@@ -41,3 +41,6 @@ HELPDESK_API_KEY = os.environ.get("HELPDESK_API_KEY")
 HELPDESK_API_SECRET = os.environ.get("HELPDESK_API_SECRET")
 
 WEBHOOK_SECRET = os.environ.get("WEBHOOK_SECRET")
+
+# Where the demo UI (ui/app.py) reaches the FastAPI service.
+API_BASE_URL = os.environ.get("API_BASE_URL", "http://localhost:8000")
