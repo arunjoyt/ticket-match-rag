@@ -2,162 +2,361 @@
   "clusters": [
     {
       "id": "vpn-crash-after-update",
-      "ticket_names": [
-        "0002",
-        "0003",
-        "0004",
-        "0005"
+      "members": [
+        {
+          "ticket_name": "0054",
+          "variant": "standard"
+        },
+        {
+          "ticket_name": "0055",
+          "variant": "standard"
+        },
+        {
+          "ticket_name": "0056",
+          "variant": "standard"
+        },
+        {
+          "ticket_name": "0057",
+          "variant": "standard"
+        },
+        {
+          "ticket_name": "0058",
+          "variant": "low-lexical-overlap"
+        }
       ]
     },
     {
       "id": "shared-drive-access-denied-after-reset",
-      "ticket_names": [
-        "0006",
-        "0007",
-        "0008",
-        "0009"
+      "members": [
+        {
+          "ticket_name": "0059",
+          "variant": "standard"
+        },
+        {
+          "ticket_name": "0060",
+          "variant": "standard"
+        },
+        {
+          "ticket_name": "0061",
+          "variant": "standard"
+        },
+        {
+          "ticket_name": "0062",
+          "variant": "standard"
+        },
+        {
+          "ticket_name": "0063",
+          "variant": "low-lexical-overlap"
+        }
       ]
     },
     {
       "id": "calendar-sync-not-updating",
-      "ticket_names": [
-        "0010",
-        "0011",
-        "0012",
-        "0013"
+      "members": [
+        {
+          "ticket_name": "0064",
+          "variant": "standard"
+        },
+        {
+          "ticket_name": "0065",
+          "variant": "standard"
+        },
+        {
+          "ticket_name": "0066",
+          "variant": "standard"
+        },
+        {
+          "ticket_name": "0067",
+          "variant": "standard"
+        },
+        {
+          "ticket_name": "0068",
+          "variant": "low-lexical-overlap"
+        }
       ]
     },
     {
       "id": "printer-jobs-stuck-after-update",
-      "ticket_names": [
-        "0014",
-        "0015",
-        "0016",
-        "0017"
+      "members": [
+        {
+          "ticket_name": "0069",
+          "variant": "standard"
+        },
+        {
+          "ticket_name": "0070",
+          "variant": "standard"
+        },
+        {
+          "ticket_name": "0071",
+          "variant": "standard"
+        },
+        {
+          "ticket_name": "0072",
+          "variant": "standard"
+        },
+        {
+          "ticket_name": "0073",
+          "variant": "low-lexical-overlap"
+        }
       ]
     },
     {
       "id": "sso-login-redirect-loop",
-      "ticket_names": [
-        "0018",
-        "0019",
-        "0020",
-        "0021"
+      "members": [
+        {
+          "ticket_name": "0074",
+          "variant": "standard"
+        },
+        {
+          "ticket_name": "0075",
+          "variant": "standard"
+        },
+        {
+          "ticket_name": "0076",
+          "variant": "standard"
+        },
+        {
+          "ticket_name": "0077",
+          "variant": "standard"
+        },
+        {
+          "ticket_name": "0078",
+          "variant": "low-lexical-overlap"
+        }
       ]
     },
     {
       "id": "slack-notifications-not-showing",
-      "ticket_names": [
-        "0022",
-        "0023",
-        "0024",
-        "0025"
+      "members": [
+        {
+          "ticket_name": "0079",
+          "variant": "standard"
+        },
+        {
+          "ticket_name": "0080",
+          "variant": "standard"
+        },
+        {
+          "ticket_name": "0081",
+          "variant": "standard"
+        },
+        {
+          "ticket_name": "0082",
+          "variant": "standard"
+        },
+        {
+          "ticket_name": "0083",
+          "variant": "low-lexical-overlap"
+        }
       ]
     },
     {
       "id": "laptop-wont-wake-from-sleep",
-      "ticket_names": [
-        "0026",
-        "0027",
-        "0028",
-        "0029"
+      "members": [
+        {
+          "ticket_name": "0084",
+          "variant": "standard"
+        },
+        {
+          "ticket_name": "0085",
+          "variant": "standard"
+        },
+        {
+          "ticket_name": "0086",
+          "variant": "standard"
+        },
+        {
+          "ticket_name": "0087",
+          "variant": "standard"
+        },
+        {
+          "ticket_name": "0088",
+          "variant": "low-lexical-overlap"
+        }
       ]
     },
     {
       "id": "password-reset-email-not-received",
-      "ticket_names": [
-        "0030",
-        "0031",
-        "0032",
-        "0033"
+      "members": [
+        {
+          "ticket_name": "0089",
+          "variant": "standard"
+        },
+        {
+          "ticket_name": "0090",
+          "variant": "standard"
+        },
+        {
+          "ticket_name": "0091",
+          "variant": "standard"
+        },
+        {
+          "ticket_name": "0092",
+          "variant": "standard"
+        },
+        {
+          "ticket_name": "0093",
+          "variant": "low-lexical-overlap"
+        }
       ]
     }
   ],
   "distractors": [
     {
-      "ticket_name": "0034",
-      "adjacent_to": "vpn-crash-after-update"
+      "ticket_name": "0094",
+      "adjacent_to": "vpn-crash-after-update",
+      "kind": "topic-adjacent"
     },
     {
-      "ticket_name": "0035",
-      "adjacent_to": "shared-drive-access-denied-after-reset"
+      "ticket_name": "0095",
+      "adjacent_to": "shared-drive-access-denied-after-reset",
+      "kind": "topic-adjacent"
     },
     {
-      "ticket_name": "0036",
-      "adjacent_to": "calendar-sync-not-updating"
+      "ticket_name": "0096",
+      "adjacent_to": "calendar-sync-not-updating",
+      "kind": "topic-adjacent"
     },
     {
-      "ticket_name": "0037",
-      "adjacent_to": "printer-jobs-stuck-after-update"
+      "ticket_name": "0097",
+      "adjacent_to": "printer-jobs-stuck-after-update",
+      "kind": "topic-adjacent"
     },
     {
-      "ticket_name": "0038",
-      "adjacent_to": "sso-login-redirect-loop"
+      "ticket_name": "0098",
+      "adjacent_to": "sso-login-redirect-loop",
+      "kind": "topic-adjacent"
     },
     {
-      "ticket_name": "0039",
-      "adjacent_to": "slack-notifications-not-showing"
+      "ticket_name": "0099",
+      "adjacent_to": "slack-notifications-not-showing",
+      "kind": "topic-adjacent"
     },
     {
-      "ticket_name": "0040",
-      "adjacent_to": "laptop-wont-wake-from-sleep"
+      "ticket_name": "0100",
+      "adjacent_to": "laptop-wont-wake-from-sleep",
+      "kind": "topic-adjacent"
     },
     {
-      "ticket_name": "0041",
-      "adjacent_to": "password-reset-email-not-received"
+      "ticket_name": "0101",
+      "adjacent_to": "password-reset-email-not-received",
+      "kind": "topic-adjacent"
     },
     {
-      "ticket_name": "0042",
-      "adjacent_to": null
+      "ticket_name": "0102",
+      "adjacent_to": null,
+      "kind": "pure-noise"
     },
     {
-      "ticket_name": "0043",
-      "adjacent_to": null
+      "ticket_name": "0103",
+      "adjacent_to": null,
+      "kind": "pure-noise"
     },
     {
-      "ticket_name": "0044",
-      "adjacent_to": null
+      "ticket_name": "0104",
+      "adjacent_to": null,
+      "kind": "pure-noise"
     },
     {
-      "ticket_name": "0045",
-      "adjacent_to": null
+      "ticket_name": "0105",
+      "adjacent_to": null,
+      "kind": "pure-noise"
     },
     {
-      "ticket_name": "0046",
-      "adjacent_to": null
+      "ticket_name": "0106",
+      "adjacent_to": null,
+      "kind": "pure-noise"
     },
     {
-      "ticket_name": "0047",
-      "adjacent_to": null
+      "ticket_name": "0107",
+      "adjacent_to": null,
+      "kind": "pure-noise"
     },
     {
-      "ticket_name": "0048",
-      "adjacent_to": null
+      "ticket_name": "0108",
+      "adjacent_to": null,
+      "kind": "pure-noise"
     },
     {
-      "ticket_name": "0049",
-      "adjacent_to": null
+      "ticket_name": "0109",
+      "adjacent_to": null,
+      "kind": "pure-noise"
+    },
+    {
+      "ticket_name": "0110",
+      "adjacent_to": "vpn-crash-after-update",
+      "kind": "near-miss"
+    },
+    {
+      "ticket_name": "0111",
+      "adjacent_to": "shared-drive-access-denied-after-reset",
+      "kind": "near-miss"
+    },
+    {
+      "ticket_name": "0112",
+      "adjacent_to": "calendar-sync-not-updating",
+      "kind": "near-miss"
+    },
+    {
+      "ticket_name": "0113",
+      "adjacent_to": "printer-jobs-stuck-after-update",
+      "kind": "near-miss"
+    },
+    {
+      "ticket_name": "0114",
+      "adjacent_to": "sso-login-redirect-loop",
+      "kind": "near-miss"
+    },
+    {
+      "ticket_name": "0115",
+      "adjacent_to": "slack-notifications-not-showing",
+      "kind": "near-miss"
+    },
+    {
+      "ticket_name": "0116",
+      "adjacent_to": "laptop-wont-wake-from-sleep",
+      "kind": "near-miss"
+    },
+    {
+      "ticket_name": "0117",
+      "adjacent_to": "password-reset-email-not-received",
+      "kind": "near-miss"
+    },
+    {
+      "ticket_name": "0118",
+      "adjacent_to": null,
+      "kind": "cross-cluster-confusable"
+    },
+    {
+      "ticket_name": "0119",
+      "adjacent_to": null,
+      "kind": "cross-cluster-confusable"
+    },
+    {
+      "ticket_name": "0120",
+      "adjacent_to": null,
+      "kind": "cross-cluster-confusable"
     }
   ],
   "demo_queries": [
     {
-      "ticket_name": "0050",
+      "ticket_name": "0121",
       "expected_cluster": "vpn-crash-after-update"
     },
     {
-      "ticket_name": "0051",
+      "ticket_name": "0122",
       "expected_cluster": "printer-jobs-stuck-after-update"
     },
     {
-      "ticket_name": "0052",
+      "ticket_name": "0123",
       "expected_cluster": "password-reset-email-not-received"
     },
     {
-      "ticket_name": "0053",
+      "ticket_name": "0124",
       "expected_cluster": null
     },
     {
-      "ticket_name": "0054",
+      "ticket_name": "0125",
       "expected_cluster": null
     }
   ]

@@ -2,15 +2,24 @@
 
 Creates three groups, per CONTEXT.md's domain model:
   - Duplicate Clusters: sets of Reusable Tickets sharing Root-Cause Similarity,
-    reworded per member, used as eval ground truth.
-  - Distractors: Reusable Tickets that are topically adjacent to a cluster (or
-    pure noise) but deliberately not a root-cause match.
+    reworded per member, used as eval ground truth. Each cluster has four
+    "standard" members plus one "low-lexical-overlap" member -- same root
+    cause, deliberately paraphrased to share minimal vocabulary with its
+    siblings, per ADR 0003's hard-positive fixture.
+  - Distractors: Reusable Tickets that are not a root-cause match for any
+    cluster. Three kinds: "topic-adjacent" (near a cluster's topic but easily
+    distinguished), "near-miss" (reuses a cluster's vocabulary but describes a
+    different root cause, per ADR 0003's hard-negative fixture), and
+    "pure-noise" (unrelated to any cluster). A fourth kind,
+    "cross-cluster-confusable", could plausibly be mistaken for either of two
+    real clusters but matches neither.
   - Demo queries: unresolved tickets (no resolution) for live selection in the
-    demo UI — some that should match a cluster, some that shouldn't.
+    demo UI -- some that should match a cluster, some that shouldn't.
 
 Writes data/seed_manifest.json recording ground truth (which ticket belongs to
-which cluster) since Helpdesk itself has no concept of a Duplicate Cluster —
-that's a domain concept of this project's eval harness, not Helpdesk's model.
+which cluster, and each ticket's variant/kind) since Helpdesk itself has no
+concept of a Duplicate Cluster -- that's a domain concept of this project's
+eval harness, not Helpdesk's model.
 """
 
 import json
@@ -49,6 +58,12 @@ CLUSTERS = [
                 "description": "Since IT pushed the latest patch to my machine, the VPN either fails to connect at all or drops within seconds. Getting a generic connection error.",
                 "resolution": "Confirmed this was caused by the patch resetting network adapter settings. Reset the network stack (netsh winsock reset) and reinstalled the VPN client; connection has been stable since.",
             },
+            {
+                "variant": "low-lexical-overlap",
+                "subject": "Remote office connection tool won't stay up, drops within moments of opening",
+                "description": "The client I use to reach internal systems from home has been cutting out constantly since my machine got refreshed with the latest software last week. It connects for a moment then dies.",
+                "resolution": "Same as recent similar cases -- the refresh left behind an old network component conflicting with the client. Removed the leftover adapter and did a clean reinstall of the connection client; stable since.",
+            },
         ],
     },
     {
@@ -73,6 +88,12 @@ CLUSTERS = [
                 "subject": "Shared folder access broken after password change",
                 "description": "Right after updating my password through the portal, I started getting access denied errors on the shared drive I need for my daily reports.",
                 "resolution": "Stale cached network credentials were the cause. Cleared them via Credential Manager under Windows Credentials, then reconnected to the share — access came back right away.",
+            },
+            {
+                "variant": "low-lexical-overlap",
+                "subject": "Team folder won't open, keeps rejecting me",
+                "description": "I can't get into our department's network folder anymore -- it just refuses me every time, ever since I had to update my login credentials this week.",
+                "resolution": "Old sign-in details were still cached on the machine from before the credential change. Cleared the stored logins and reconnected to the folder, which let them back in.",
             },
         ],
     },
@@ -99,6 +120,12 @@ CLUSTERS = [
                 "description": "If I accept a meeting on my laptop, it doesn't reflect on my tablet's calendar for hours, sometimes not at all.",
                 "resolution": "Traced it to a stalled background sync process on the tablet. Forced a manual account resync in settings and confirmed events appeared correctly afterward.",
             },
+            {
+                "variant": "low-lexical-overlap",
+                "subject": "Schedule on my mobile is behind what's on my desktop",
+                "description": "Appointments I set up at my desk yesterday still aren't showing up when I check my phone -- it's like the two aren't talking to each other anymore.",
+                "resolution": "The device's connection to the account had quietly broken. Deleted and re-added the account on the phone to force a fresh handshake; entries appeared correctly after.",
+            },
         ],
     },
     {
@@ -123,6 +150,12 @@ CLUSTERS = [
                 "subject": "Print queue frozen after latest patch",
                 "description": "The print queue on my machine has been frozen since the update went out — jobs just accumulate and nothing prints.",
                 "resolution": "Print spooler service had hung due to the update. Killed and restarted the spooler after purging the spool folder; print jobs now process normally.",
+            },
+            {
+                "variant": "low-lexical-overlap",
+                "subject": "Nothing comes out of the office printer anymore",
+                "description": "Every document I send just piles up waiting and never actually prints -- started right after my machine got its latest round of patches installed.",
+                "resolution": "The patch left the background print service in a broken state, same pattern as other recent cases. Restarted the service after clearing its temporary job folder; output resumed immediately.",
             },
         ],
     },
@@ -149,6 +182,12 @@ CLUSTERS = [
                 "description": "After entering my password, the SSO page just reloads itself repeatedly instead of taking me to the app I'm trying to reach.",
                 "resolution": "Root cause was an expired SAML assertion cache on the client side. Cleared the browser's site data for the SSO provider and retried, which let the login complete normally.",
             },
+            {
+                "variant": "low-lexical-overlap",
+                "subject": "Portal won't let me in, just keeps bouncing back to sign-in",
+                "description": "Trying to reach any internal tool sends me right back to the sign-in screen in an endless cycle, never actually getting me through.",
+                "resolution": "Same underlying issue as recent cases -- a leftover authentication session was conflicting with the identity provider. Signed the user out everywhere and cleared local site data; loop stopped.",
+            },
         ],
     },
     {
@@ -173,6 +212,12 @@ CLUSTERS = [
                 "subject": "Slack won't alert me to new DMs",
                 "description": "Direct messages aren't triggering any notification on my desktop client, I only notice them if I happen to check the app.",
                 "resolution": "Diagnosed notification permissions being blocked at the OS level after a recent update. Reset app notification permissions and confirmed alerts started working again.",
+            },
+            {
+                "variant": "low-lexical-overlap",
+                "subject": "Team chat app staying completely quiet on new messages",
+                "description": "I'm not being alerted at all when people message me in our team chat tool -- no sound, no popup, nothing, unless I happen to have the window open.",
+                "resolution": "Consistent with other recent reports -- the app's permission to alert had been quietly turned off at the system level. Re-enabled it in system settings; alerts resumed.",
             },
         ],
     },
@@ -199,6 +244,12 @@ CLUSTERS = [
                 "description": "The machine becomes completely unresponsive after sitting idle and going to sleep — I have to force restart every time.",
                 "resolution": "Determined a background process was hanging the wake sequence. Disabled fast startup and updated the chipset drivers, which fixed the unresponsiveness on wake.",
             },
+            {
+                "variant": "low-lexical-overlap",
+                "subject": "Machine unresponsive every time I open it back up",
+                "description": "After it's been sitting idle for a while, opening the lid does nothing -- display stays dark and I end up having to force a restart to get anything back.",
+                "resolution": "Matches the pattern of other recent cases -- an out-of-date display driver was interfering with wake. Updated it to the current version; problem hasn't recurred.",
+            },
         ],
     },
     {
@@ -223,6 +274,12 @@ CLUSTERS = [
                 "subject": "No email showing up for my password reset request",
                 "description": "I've requested the reset email multiple times and nothing arrives, not in inbox or spam folder.",
                 "resolution": "User's email address had a typo in the account profile from a prior update. Corrected the email address on file and resent the reset link successfully.",
+            },
+            {
+                "variant": "low-lexical-overlap",
+                "subject": "Requested a new login link but nothing ever shows up",
+                "description": "I asked for a way to get back into my account almost two hours ago and still have nothing in my inbox, checked everywhere including junk.",
+                "resolution": "Consistent with recent similar cases -- delivery had stalled somewhere in the outbound pipeline. Manually pushed the message through after confirming the queue had cleared; arrived shortly after.",
             },
         ],
     },
@@ -327,6 +384,89 @@ DISTRACTORS = [
         "description": "Our room booking tool is letting two different meetings book the same room at the same time.",
         "resolution": "Identified a race condition in the booking tool when two requests hit simultaneously. Reported to the vendor and applied their patch, which fixed the double-booking.",
     },
+    # Near-miss: reuses a cluster's vocabulary but has a different root cause
+    # (per ADR 0003). Should rank close to its cluster on lexical/semantic
+    # similarity but fail Root-Cause Similarity, so the reranker + Match
+    # Threshold -- not fusion ranking -- is what should keep it out.
+    {
+        "kind": "near-miss",
+        "adjacent_to": "vpn-crash-after-update",
+        "subject": "VPN takes several minutes to connect after the latest update",
+        "description": "Since the recent forced update, the VPN client takes 5+ minutes just to establish a connection, though once connected it seems to work fine.",
+        "resolution": "The update reset the VPN client's DNS resolution order, causing lengthy handshake retries. Corrected the DNS server order in the VPN client's network settings, connection time back to normal.",
+    },
+    {
+        "kind": "near-miss",
+        "adjacent_to": "shared-drive-access-denied-after-reset",
+        "subject": "Access denied on shared drive after password reset, remapping doesn't help",
+        "description": "Reset my password like requested and now get 'Access Denied' on the Finance shared drive -- I already tried remapping it and clearing cached credentials but nothing works.",
+        "resolution": "This one wasn't cached credentials -- the password reset process had accidentally dropped the user from the Finance security group. Re-added their account to the Finance AD group, access restored.",
+    },
+    {
+        "kind": "near-miss",
+        "adjacent_to": "calendar-sync-not-updating",
+        "subject": "Calendar showing duplicate meetings after recent sync issue",
+        "description": "My calendar has started showing every meeting twice since yesterday -- looks similar to the sync problems others have reported, but I'm getting doubles, not missing events.",
+        "resolution": "Different cause than typical sync lag -- the user had two calendar profiles linked to the same account. Removed the duplicate profile, doubled entries stopped appearing.",
+    },
+    {
+        "kind": "near-miss",
+        "adjacent_to": "printer-jobs-stuck-after-update",
+        "subject": "Print jobs stuck in queue since Windows update, restarting spooler didn't help",
+        "description": "Same as the other post-update printing tickets -- jobs pile up in the queue -- but I already tried restarting the print spooler and clearing the folder and it's still stuck.",
+        "resolution": "This one wasn't the spooler -- the update had silently rolled back to a generic driver incompatible with the printer model. Reinstalled the correct manufacturer driver, jobs started processing again.",
+    },
+    {
+        "kind": "near-miss",
+        "adjacent_to": "sso-login-redirect-loop",
+        "subject": "Stuck in login loop after entering credentials, same as recent SSO issues",
+        "description": "Getting bounced back to the SSO login page repeatedly just like other reported cases -- already cleared my cookies and tried a different browser, still looping.",
+        "resolution": "Not a session/cache issue this time -- the account had been disabled during an offboarding cleanup by mistake. Re-enabled the account in the identity provider, login completed normally on first try.",
+    },
+    {
+        "kind": "near-miss",
+        "adjacent_to": "slack-notifications-not-showing",
+        "subject": "Not getting Slack notifications, already checked permissions and settings",
+        "description": "Same complaint as other recent tickets -- no alerts for new Slack messages -- but I already confirmed OS notification permissions are enabled and DND is off, still nothing.",
+        "resolution": "Turned out the desktop app was signed into the wrong Slack workspace after a recent re-login, so messages in the main workspace never triggered anything locally. Switched to the correct workspace, notifications working again.",
+    },
+    {
+        "kind": "near-miss",
+        "adjacent_to": "laptop-wont-wake-from-sleep",
+        "subject": "Laptop won't wake from sleep, already updated drivers and reset power plan",
+        "description": "Same symptoms as other recent tickets -- screen stays black after sleep -- but I've already updated the graphics driver and reset the power plan like those other fixes, no change.",
+        "resolution": "Different root cause here -- battery diagnostics showed the internal battery was failing and couldn't supply enough power to resume from low-power state reliably. Replaced the battery, wake issue resolved.",
+    },
+    {
+        "kind": "near-miss",
+        "adjacent_to": "password-reset-email-not-received",
+        "subject": "Password reset email still not received, already tried resending twice",
+        "description": "Same issue as other recent tickets -- no reset email arriving -- but I've already had it resent twice and checked spam like those fixes suggested, still nothing.",
+        "resolution": "Different cause than the delivery issues in other tickets -- the user was requesting resets using an old personal email no longer on file, instead of their current work address. Had them request it via the profile's current work email, arrived immediately.",
+    },
+    # Cross-cluster confusables: could plausibly be mistaken for either of two
+    # real clusters, but match neither (per ADR 0003).
+    {
+        "kind": "cross-cluster-confusable",
+        "adjacent_to": None,
+        "subject": "Can't sign into company portal, keep getting bounced around",
+        "description": "Every time I try to log into the internal portal I either get an error page or get sent back to where I started -- not sure if it's my password or something else, this has been going on for a day.",
+        "resolution": "Traced to an expired SAML certificate on the identity provider's side for this specific application integration, unrelated to the user's browser or account. Renewed the certificate on the IdP configuration, portal access restored for all affected users.",
+    },
+    {
+        "kind": "cross-cluster-confusable",
+        "adjacent_to": None,
+        "subject": "App badge counts and previews are stale, not refreshing live",
+        "description": "The little unread counts and message previews on my dock icons aren't updating unless I manually reopen the apps -- affects a couple of different apps, feels similar to other notification or sync complaints people have filed.",
+        "resolution": "This was a system-wide Notification Center cache issue after a recent macOS update, not specific to any one app. Rebuilt the Notification Center database via Terminal and restarted; badge counts and previews began refreshing normally across all apps.",
+    },
+    {
+        "kind": "cross-cluster-confusable",
+        "adjacent_to": None,
+        "subject": "Can't reach any internal resources over VPN after password change",
+        "description": "Since resetting my password this week, my VPN won't connect to the office network at all -- not sure if it's a VPN client issue like others have had or something with my new password.",
+        "resolution": "Neither the client software nor local cached credentials were the issue -- the RADIUS server hadn't yet synced the new password from the identity provider, causing VPN authentication to fail for a short window. Waited for directory sync to complete and had the user retry; connected successfully without any client changes.",
+    },
 ]
 
 DEMO_QUERIES = [
@@ -395,20 +535,24 @@ def main() -> None:
     manifest = {"clusters": [], "distractors": [], "demo_queries": []}
 
     for cluster in CLUSTERS:
-        member_names = []
+        members = []
         for member in cluster["members"]:
+            variant = member.get("variant", "standard")
             name = create_ticket(session, member["subject"], member["description"])
             resolve_ticket(session, name, member["resolution"])
-            member_names.append(name)
-            print(f"[cluster:{cluster['id']}] {name} - {member['subject']}")
-        manifest["clusters"].append({"id": cluster["id"], "ticket_names": member_names})
+            members.append({"ticket_name": name, "variant": variant})
+            print(f"[cluster:{cluster['id']}:{variant}] {name} - {member['subject']}")
+        manifest["clusters"].append({"id": cluster["id"], "members": members})
 
     for distractor in DISTRACTORS:
+        kind = distractor.get("kind") or (
+            "topic-adjacent" if distractor["adjacent_to"] else "pure-noise"
+        )
         name = create_ticket(session, distractor["subject"], distractor["description"])
         resolve_ticket(session, name, distractor["resolution"])
-        print(f"[distractor] {name} - {distractor['subject']}")
+        print(f"[distractor:{kind}] {name} - {distractor['subject']}")
         manifest["distractors"].append(
-            {"ticket_name": name, "adjacent_to": distractor["adjacent_to"]}
+            {"ticket_name": name, "adjacent_to": distractor["adjacent_to"], "kind": kind}
         )
 
     for query in DEMO_QUERIES:
@@ -421,7 +565,8 @@ def main() -> None:
     MANIFEST_PATH.parent.mkdir(parents=True, exist_ok=True)
     MANIFEST_PATH.write_text(json.dumps(manifest, indent=2))
     print(f"\nWrote manifest to {MANIFEST_PATH}")
-    total = len(CLUSTERS) * 4 + len(DISTRACTORS) + len(DEMO_QUERIES)
+    total_cluster_tickets = sum(len(c["members"]) for c in CLUSTERS)
+    total = total_cluster_tickets + len(DISTRACTORS) + len(DEMO_QUERIES)
     print(f"Seeded {total} tickets total.")
 
 
