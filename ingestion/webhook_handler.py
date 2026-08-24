@@ -7,9 +7,13 @@ Fails closed: if WEBHOOK_SECRET is unset, requests are rejected outright,
 never validated against an empty-string key. See
 contract_intelligence_carryforward memory, item 2.
 
-Only builds and verifies the webhook path here; wiring live webhook delivery
-from the Helpdesk dev instance to this service is deployment work, deferred
-to a later phase.
+Wired up for local dev via scripts/register_webhook.py, which registers a
+Frappe Webhook (HD Ticket, on_update) pointed at this route -- see ADR 0005
+for the setup and its non-obvious gotchas (Frappe sends an empty body
+unless webhook_data is explicitly configured; this endpoint only needs the
+ticket name in the payload since it refetches the rest). Production wiring
+(Contabo Helpdesk -> AWS EC2 API) is separate, tracked in
+docs/DEPLOYMENT_PLAN.md.
 """
 
 from __future__ import annotations

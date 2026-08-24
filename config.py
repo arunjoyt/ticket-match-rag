@@ -44,3 +44,11 @@ WEBHOOK_SECRET = os.environ.get("WEBHOOK_SECRET")
 
 # Where the demo UI (ui/app.py) reaches the FastAPI service.
 API_BASE_URL = os.environ.get("API_BASE_URL", "http://localhost:8000")
+
+# Where scripts/register_webhook.py points Helpdesk's Webhook doctype so it
+# can deliver HD Ticket events to /webhook/helpdesk. host.docker.internal,
+# not localhost -- Helpdesk runs inside its own Docker Compose project and
+# has to reach the API on the host machine, not inside its own container.
+# Production wiring (Contabo Helpdesk -> AWS EC2 API) is separate, tracked
+# in DEPLOYMENT_PLAN.md -- this default is local-dev only.
+API_WEBHOOK_URL = os.environ.get("API_WEBHOOK_URL", "http://host.docker.internal:8000/webhook/helpdesk")
