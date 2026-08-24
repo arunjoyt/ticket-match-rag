@@ -1,12 +1,18 @@
-"""Registers a Frappe Webhook so HD Ticket create/update events are
+"""Registers Frappe Webhooks so HD Ticket create/update/delete events are
 delivered live to this service's /webhook/helpdesk endpoint (see
 ingestion/webhook_handler.py), instead of only picking up changes on the
 next manual POST /ingest/full.
 
+Two webhooks, not one: Frappe's webhook_docevent field is single-select, so
+one Webhook document can't cover both "on_update" (create/edit, including
+edits that first make a ticket eligible by adding resolution_details) and
+"on_trash" (delete, so webhook_handler.py can remove the stale Qdrant
+point). Without on_trash, deleting a ticket in Helpdesk orphans its point.
+
 Idempotent: deletes any existing Webhook already pointed at
-config.API_WEBHOOK_URL before creating a fresh one, so re-running this
-after changing WEBHOOK_SECRET or the API's port doesn't leave stale
-duplicates delivering with the wrong secret.
+config.API_WEBHOOK_URL before creating fresh ones, so re-running this after
+changing WEBHOOK_SECRET or the API's port doesn't leave stale duplicates
+delivering with the wrong secret.
 
 Local dev only -- see config.API_WEBHOOK_URL's docstring for why it targets
 host.docker.internal. Requires the API (api/main.py) already reachable at
@@ -42,19 +48,20 @@ def delete_existing(session: requests.Session) -> None:
         print(f"Deleted existing webhook {row['name']}")
 
 
-def create_webhook(session: requests.Session) -> str:
+def create_webhook(session: requests.Session, docevent: str) -> str:
     resp = session.post(
         f"{BASE_URL}/api/resource/Webhook",
         json={
-            "name": "ticket-match-rag-hd-ticket-on-update",  # Webhook uses Prompt autonaming, name is required
+            "name": f"ticket-match-rag-hd-ticket-{docevent.replace('_', '-')}",  # Prompt autonaming, name is required
             "webhook_doctype": "HD Ticket",
-            "webhook_docevent": "on_update",
+            "webhook_docevent": docevent,
             "request_url": config.API_WEBHOOK_URL,
             "request_method": "POST",
             # Frappe's Webhook only sends a body if webhook_data or webhook_json
             # is set -- an empty webhook (neither) sends an empty {} body, which
             # webhook_handler.py rejects. webhook_handler.py only needs the
-            # ticket name; it refetches the rest via HelpdeskClient.get_ticket().
+            # ticket name; it refetches the rest via HelpdeskClient.get_ticket()
+            # (or, for on_trash, gets a 404 and treats that as a deletion).
             "webhook_data": [{"fieldname": "name", "key": "name"}],
             "enable_security": 1,
             "webhook_secret": config.WEBHOOK_SECRET,
@@ -72,8 +79,9 @@ def main() -> None:
     session = requests.Session()
     login(session)
     delete_existing(session)
-    name = create_webhook(session)
-    print(f"Registered Webhook {name}: HD Ticket on_update -> {config.API_WEBHOOK_URL}")
+    for docevent in ("on_update", "on_trash"):
+        name = create_webhook(session, docevent)
+        print(f"Registered Webhook {name}: HD Ticket {docevent} -> {config.API_WEBHOOK_URL}")
 
 
 if __name__ == "__main__":

@@ -1,19 +1,23 @@
 """Incremental re-indexing via Frappe webhooks.
 
-POST /webhook/helpdesk -- verifies HMAC-SHA256 signature, fetches the updated
-ticket, deletes its existing Qdrant point, and re-indexes if still eligible.
+POST /webhook/helpdesk -- verifies HMAC-SHA256 signature, fetches the
+updated ticket, deletes its existing Qdrant point, and re-indexes if still
+eligible. If the ticket no longer exists (HD Ticket was trashed), deletes
+the Qdrant point and stops there -- see ADR 0005's "Known limitation"
+section, since fixed: on_trash is now registered alongside on_update.
 
 Fails closed: if WEBHOOK_SECRET is unset, requests are rejected outright,
 never validated against an empty-string key. See
 contract_intelligence_carryforward memory, item 2.
 
-Wired up for local dev via scripts/register_webhook.py, which registers a
-Frappe Webhook (HD Ticket, on_update) pointed at this route -- see ADR 0005
-for the setup and its non-obvious gotchas (Frappe sends an empty body
-unless webhook_data is explicitly configured; this endpoint only needs the
-ticket name in the payload since it refetches the rest). Production wiring
-(Contabo Helpdesk -> AWS EC2 API) is separate, tracked in
-docs/DEPLOYMENT_PLAN.md.
+Wired up for local dev via scripts/register_webhook.py, which registers two
+Frappe Webhooks (HD Ticket, on_update and on_trash -- Frappe's
+webhook_docevent is single-select, so one document can't cover both) pointed
+at this route -- see ADR 0005 for the setup and its non-obvious gotchas
+(Frappe sends an empty body unless webhook_data is explicitly configured;
+this endpoint only needs the ticket name in the payload since it refetches
+the rest). Production wiring (Contabo Helpdesk -> AWS EC2 API) is separate,
+tracked in docs/DEPLOYMENT_PLAN.md.
 """
 
 from __future__ import annotations
@@ -24,6 +28,7 @@ import hmac
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request
+from requests.exceptions import HTTPError
 
 from ingestion.embedder import Embedder, SparseEmbedder, SparseVector, match_text
 from ingestion.helpdesk_client import HelpdeskClient
@@ -79,7 +84,14 @@ def create_webhook_router(
         if not ticket_name:
             raise HTTPException(status_code=400, detail="Missing ticket name in payload")
 
-        ticket = helpdesk_client.get_ticket(ticket_name)
+        try:
+            ticket = helpdesk_client.get_ticket(ticket_name)
+        except HTTPError as exc:
+            if exc.response is not None and exc.response.status_code == 404:
+                vector_store.delete_by_ticket_name(ticket_name)
+                return {"status": "deleted", "ticket_name": ticket_name}
+            raise
+
         vector_store.delete_by_ticket_name(ticket_name)
 
         if ticket.get("resolution_details"):
