@@ -17,12 +17,11 @@ from __future__ import annotations
 import base64
 import hashlib
 import hmac
-from collections.abc import Callable
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request
 
-from ingestion.embedder import Embedder, match_text
+from ingestion.embedder import Embedder, SparseEmbedder, SparseVector, match_text
 from ingestion.helpdesk_client import HelpdeskClient
 from retrieval.vector_store import VectorStore
 
@@ -41,9 +40,12 @@ def verify_signature(body: bytes, signature: str | None, secret: str | None) -> 
         raise HTTPException(status_code=401, detail="Invalid webhook signature")
 
 
-def prepare_doc_for_indexing(ticket: dict, embedder: Embedder) -> tuple[list[float], dict]:
+def prepare_doc_for_indexing(
+    ticket: dict, embedder: Embedder, sparse_embedder: SparseEmbedder
+) -> tuple[list[float], SparseVector, dict]:
     text = match_text(ticket["subject"], ticket["description"])
-    vector = embedder.embed_query(text)
+    dense_vector = embedder.embed_query(text)
+    sparse_vector = sparse_embedder.embed_document(text)
     payload = {
         "ticket_name": ticket["name"],
         "subject": ticket["subject"],
@@ -51,14 +53,14 @@ def prepare_doc_for_indexing(ticket: dict, embedder: Embedder) -> tuple[list[flo
         "resolution_details": ticket.get("resolution_details", ""),
         "match_text": text,
     }
-    return vector, payload
+    return dense_vector, sparse_vector, payload
 
 
 def create_webhook_router(
     helpdesk_client: HelpdeskClient,
     embedder: Embedder,
+    sparse_embedder: SparseEmbedder,
     vector_store: VectorStore,
-    rebuild_bm25: Callable[[], None],
     webhook_secret: str | None,
 ) -> APIRouter:
     router = APIRouter()
@@ -77,12 +79,10 @@ def create_webhook_router(
         vector_store.delete_by_ticket_name(ticket_name)
 
         if ticket.get("resolution_details"):
-            vector, doc_payload = prepare_doc_for_indexing(ticket, embedder)
-            vector_store.upsert_ticket(ticket_name, vector, doc_payload)
-            rebuild_bm25()
+            dense_vector, sparse_vector, doc_payload = prepare_doc_for_indexing(ticket, embedder, sparse_embedder)
+            vector_store.upsert_ticket(ticket_name, dense_vector, sparse_vector, doc_payload)
             return {"status": "indexed", "ticket_name": ticket_name}
 
-        rebuild_bm25()
         return {"status": "removed", "ticket_name": ticket_name}
 
     return router

@@ -12,7 +12,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException
 
 import config
-from ingestion.embedder import Embedder, match_text
+from ingestion.embedder import Embedder, SparseEmbedder, match_text
 from ingestion.helpdesk_client import HelpdeskClient
 from ingestion.webhook_handler import create_webhook_router, prepare_doc_for_indexing
 from retrieval.hybrid_search import HybridSearch
@@ -26,15 +26,16 @@ CANDIDATE_POOL_SIZE = 20
 @asynccontextmanager
 async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     embedder = Embedder()
+    sparse_embedder = SparseEmbedder()
     vector_store = VectorStore()
     vector_store.ensure_collection(embedder.dimension())
-    hybrid_search = HybridSearch(embedder, vector_store)
-    hybrid_search.rebuild_bm25_from_store()
+    hybrid_search = HybridSearch(embedder, sparse_embedder, vector_store)
     reranker = Reranker()
     reranker.warm_up()
     helpdesk_client = HelpdeskClient()
 
     app.state.embedder = embedder
+    app.state.sparse_embedder = sparse_embedder
     app.state.vector_store = vector_store
     app.state.hybrid_search = hybrid_search
     app.state.reranker = reranker
@@ -44,8 +45,8 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         create_webhook_router(
             helpdesk_client=helpdesk_client,
             embedder=embedder,
+            sparse_embedder=sparse_embedder,
             vector_store=vector_store,
-            rebuild_bm25=hybrid_search.rebuild_bm25_from_store,
             webhook_secret=config.WEBHOOK_SECRET,
         )
     )
@@ -65,15 +66,14 @@ async def health() -> dict[str, str]:
 async def ingest_full() -> dict[str, int]:
     helpdesk_client: HelpdeskClient = app.state.helpdesk_client
     embedder: Embedder = app.state.embedder
+    sparse_embedder: SparseEmbedder = app.state.sparse_embedder
     vector_store: VectorStore = app.state.vector_store
-    hybrid_search: HybridSearch = app.state.hybrid_search
 
     tickets = helpdesk_client.list_reusable_tickets()
     for ticket in tickets:
-        vector, payload = prepare_doc_for_indexing(ticket, embedder)
-        vector_store.upsert_ticket(ticket["name"], vector, payload)
+        dense_vector, sparse_vector, payload = prepare_doc_for_indexing(ticket, embedder, sparse_embedder)
+        vector_store.upsert_ticket(ticket["name"], dense_vector, sparse_vector, payload)
 
-    hybrid_search.rebuild_bm25_from_store()
     return {"indexed": len(tickets)}
 
 

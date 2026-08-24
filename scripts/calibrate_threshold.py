@@ -22,7 +22,7 @@ from __future__ import annotations
 
 import config
 from eval.dataset import EvalQuery, build_qrels, build_queries, load_manifest
-from ingestion.embedder import Embedder, match_text
+from ingestion.embedder import Embedder, SparseEmbedder, match_text
 from ingestion.helpdesk_client import HelpdeskClient
 from retrieval.hybrid_search import HybridSearch
 from retrieval.reranker import Reranker
@@ -38,10 +38,10 @@ def main() -> None:
     qrels = build_qrels(manifest)
 
     embedder = Embedder()
+    sparse_embedder = SparseEmbedder()
     vector_store = VectorStore()
     vector_store.ensure_collection(embedder.dimension())
-    hybrid_search = HybridSearch(embedder, vector_store)
-    hybrid_search.rebuild_bm25_from_store()
+    hybrid_search = HybridSearch(embedder, sparse_embedder, vector_store)
     reranker = Reranker()
     reranker.warm_up()
     helpdesk_client = HelpdeskClient()

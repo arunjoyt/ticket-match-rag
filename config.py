@@ -15,6 +15,7 @@ load_dotenv()
 
 EMBEDDING_MODEL = os.environ.get("EMBEDDING_MODEL", "BAAI/bge-small-en-v1.5")
 RERANK_MODEL = os.environ.get("RERANK_MODEL", "cross-encoder/ms-marco-MiniLM-L-6-v2")
+SPARSE_MODEL = os.environ.get("SPARSE_MODEL", "Qdrant/bm25")
 
 # Gates Match Threshold (see CONTEXT.md) -- calibrated against the seeded
 # dataset's rerank score distribution via scripts/calibrate_threshold.py,

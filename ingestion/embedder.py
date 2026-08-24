@@ -8,6 +8,9 @@ symmetric (see the Ticket Match RAG grill session's Option B decision).
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
+from fastembed import SparseTextEmbedding
 from sentence_transformers import SentenceTransformer
 
 import config
@@ -37,3 +40,38 @@ class Embedder:
 
     def embed_query(self, text: str) -> list[float]:
         return self.embed_texts([text])[0]
+
+
+@dataclass
+class SparseVector:
+    indices: list[int]
+    values: list[float]
+
+
+class SparseEmbedder:
+    """BM25 sparse vectors via fastembed, upserted per-point like dense
+    vectors (see ADR 0002). Document- and query-side encoding are distinct,
+    unlike dense embedding: `embed_document` carries term-frequency +
+    doc-length normalization only, no corpus knowledge; Qdrant's
+    `Modifier.IDF` (retrieval/vector_store.py) supplies corpus-wide IDF
+    server-side, incrementally, as points are upserted/deleted -- that's
+    what eliminates the BM25Okapi full-corpus rebuild this replaces.
+    """
+
+    def __init__(self, model: str = config.SPARSE_MODEL) -> None:
+        self._model = SparseTextEmbedding(model)
+
+    def embed_documents(self, texts: list[str]) -> list[SparseVector]:
+        if not texts:
+            return []
+        return [_to_sparse_vector(e) for e in self._model.embed(texts)]
+
+    def embed_document(self, text: str) -> SparseVector:
+        return self.embed_documents([text])[0]
+
+    def embed_query(self, text: str) -> SparseVector:
+        return _to_sparse_vector(next(iter(self._model.query_embed([text]))))
+
+
+def _to_sparse_vector(embedding) -> SparseVector:
+    return SparseVector(indices=embedding.indices.tolist(), values=embedding.values.tolist())

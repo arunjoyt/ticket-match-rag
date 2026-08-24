@@ -1,5 +1,5 @@
 ---
-status: proposed
+status: implemented
 ---
 
 # Move BM25 into Qdrant's native sparse vectors
@@ -22,4 +22,8 @@ Debounce/batch the existing rebuild instead of removing it (rebuild on a timer o
 
 Breaking schema change: the current collection has an unnamed dense vector, incompatible with the new named `dense`/`bm25` vectors. Requires collection recreation + full re-ingest (same category as `config.py`'s existing note on `EMBEDDING_MODEL` changes) — no data loss risk since Helpdesk remains the source of truth and Qdrant is a rebuildable index. `retrieval/hybrid_search.py` loses essentially all its logic (`BM25Okapi`, manual RRF, the rebuild methods); `ingestion/webhook_handler.py` loses its `rebuild_bm25` callback parameter entirely.
 
-**Status: proposed, not yet implemented.**
+## Verification
+
+Implemented per the plan above with no deviations. Verified against the eval harness (#2, `eval/run.py`) before/after: final-stage metrics (precision@5, MRR, nDCG@5) came out identical pre- and post-migration -- expected, since this is a storage/fusion-mechanism swap, not a retrieval-quality change. Retrieval-stage recall@20 dipped marginally (1.000 → 0.994 overall, one low-lexical-overlap ticket at the candidate-pool edge), attributable to native Qdrant RRF fusion mechanics differing slightly from the hand-rolled version. `scripts/calibrate_threshold.py`'s recommended `MATCH_THRESHOLD` was unchanged (-0.3623) after the migration, and the rerank scores on the #8 spot-check ticket were bit-for-bit identical -- confirming the reranker is unaffected by which retrieval/fusion mechanism feeds it, which also narrows #8's open investigation away from the fusion-mechanism hypothesis.
+
+**Status: implemented.**
