@@ -6,10 +6,13 @@ eval/run.py), reranks its full candidate pool and labels each candidate
 relevant (true cluster sibling, per the qrels in eval/dataset.py) or not
 (every other ticket -- other clusters' members and all Distractor kinds).
 Sweeps threshold values over the observed rerank scores and reports the one
-maximizing F1: the Match Threshold's job (CONTEXT.md) is a precision/recall
-trade-off on a binary show/don't-show gate, not a ranking concern, so this
-optimizes the metric a binary gate is actually supposed to hit rather than
-picking a threshold that just looks reasonable.
+maximizing F-beta (BETA < 1, precision-weighted): the Match Threshold's job
+(CONTEXT.md) is a precision/recall trade-off on a binary show/don't-show
+gate, and CONTEXT.md is explicit that the gate should lean toward precision
+-- "never forces a low-confidence Match onto the agent just to fill the
+panel." Balanced F1 was tried first and rejected: it picked a threshold that
+increased near-miss-distractor leakage relative to the prior default, which
+is the opposite of what this calibration is for.
 
 Usage: python -m scripts.calibrate_threshold
 Assumes the corpus is already indexed (same precondition as eval/run.py).
@@ -26,6 +29,7 @@ from retrieval.reranker import Reranker
 from retrieval.vector_store import VectorStore
 
 CANDIDATE_POOL_SIZE = 20
+BETA = 0.5  # precision-weighted, per CONTEXT.md's Match Threshold bias
 
 
 def main() -> None:
@@ -51,8 +55,8 @@ def main() -> None:
     print(f"  non-relevant score range: min={min(negatives):.3f} max={max(negatives):.3f} mean={sum(negatives) / len(negatives):.3f}")
 
     threshold, stats = _best_threshold(labeled)
-    print(f"\nRecommended MATCH_THRESHOLD = {threshold:.4f}")
-    print(f"  precision={stats['precision']:.3f} recall={stats['recall']:.3f} f1={stats['f1']:.3f} (tp={stats['tp']} fp={stats['fp']} fn={stats['fn']})")
+    print(f"\nRecommended MATCH_THRESHOLD = {threshold:.4f}  (optimizing F{BETA})")
+    print(f"  precision={stats['precision']:.3f} recall={stats['recall']:.3f} f{BETA}={stats['f_beta']:.3f} (tp={stats['tp']} fp={stats['fp']} fn={stats['fn']})")
     print(f"\nCurrent config.MATCH_THRESHOLD = {config.MATCH_THRESHOLD}")
 
 
@@ -81,19 +85,22 @@ def _collect_labeled_scores(
 
 def _best_threshold(labeled: list[tuple[float, bool]]) -> tuple[float, dict]:
     """Sweeps every observed score as a candidate `score >= threshold` cutoff,
-    picking the one maximizing F1 (ties broken by precision, then by higher
-    threshold -- a Match should stay conservative when the trade-off is even).
+    picking the one maximizing F-beta (ties broken by precision, then by
+    higher threshold -- a Match should stay conservative when the trade-off
+    is even).
     """
     best_stats: dict | None = None
+    beta_sq = BETA**2
     for candidate in sorted({score for score, _ in labeled}):
         tp = sum(1 for score, relevant in labeled if relevant and score >= candidate)
         fp = sum(1 for score, relevant in labeled if not relevant and score >= candidate)
         fn = sum(1 for score, relevant in labeled if relevant and score < candidate)
         precision = tp / (tp + fp) if (tp + fp) else 0.0
         recall = tp / (tp + fn) if (tp + fn) else 0.0
-        f1 = 2 * precision * recall / (precision + recall) if (precision + recall) else 0.0
-        stats = {"threshold": candidate, "precision": precision, "recall": recall, "f1": f1, "tp": tp, "fp": fp, "fn": fn}
-        if best_stats is None or (f1, precision, candidate) > (best_stats["f1"], best_stats["precision"], best_stats["threshold"]):
+        denom = beta_sq * precision + recall
+        f_beta = (1 + beta_sq) * precision * recall / denom if denom else 0.0
+        stats = {"threshold": candidate, "precision": precision, "recall": recall, "f_beta": f_beta, "tp": tp, "fp": fp, "fn": fn}
+        if best_stats is None or (f_beta, precision, candidate) > (best_stats["f_beta"], best_stats["precision"], best_stats["threshold"]):
             best_stats = stats
     return best_stats["threshold"], best_stats
 

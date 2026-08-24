@@ -17,9 +17,11 @@ EMBEDDING_MODEL = os.environ.get("EMBEDDING_MODEL", "BAAI/bge-small-en-v1.5")
 RERANK_MODEL = os.environ.get("RERANK_MODEL", "cross-encoder/ms-marco-MiniLM-L-6-v2")
 
 # Gates Match Threshold (see CONTEXT.md) -- calibrated against the seeded
-# dataset's rerank score distribution (scripts/calibrate_threshold.py),
-# not a fixed domain rule. Recalibrate if the corpus changes materially.
-MATCH_THRESHOLD = float(os.environ.get("MATCH_THRESHOLD", "0.0"))
+# dataset's rerank score distribution via scripts/calibrate_threshold.py,
+# optimizing F0.5 (precision-weighted, per CONTEXT.md's bias against
+# low-confidence Matches). Not a fixed domain rule -- recalibrate if the
+# corpus changes materially.
+MATCH_THRESHOLD = float(os.environ.get("MATCH_THRESHOLD", "-0.3623"))
 
 QDRANT_URL = os.environ.get("QDRANT_URL", "http://localhost:6333")
 QDRANT_COLLECTION = os.environ.get("QDRANT_COLLECTION", "tickets")
