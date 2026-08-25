@@ -4,6 +4,8 @@ status: proposed
 
 # Background-computed Matches, cached in Postgres, served natively inside Helpdesk
 
+> **Partially superseded by [ADR 0007](0007-accept-match-cache-staleness.md):** the `corpus_version` read gate described below (point 1, "Corpus-version-gated cache") is dropped in favor of accepting cache staleness. Everything else here stands as written.
+
 Every read today (`GET /tickets/{ticket_name}/matches`, called by both the standalone demo UI and, going forward, Helpdesk itself) runs the full pipeline from scratch: a live Helpdesk fetch, a dense embed, a sparse embed, a Qdrant hybrid query, and a full cross-encoder rerank pass over ~20 candidates. Fine at this corpus's scale, but the goal now is to showcase that this holds up at real production data volumes, and to show Matches where an agent actually works -- inside Helpdesk's own ticket view, not only a separate demo page.
 
 Decision: precompute Matches in a background worker, cache them in Postgres keyed to a corpus-version counter, and serve Helpdesk's own (currently unimplemented) "similar tickets" UI slot from that cache via a Frappe API override. Three coordinated pieces:
