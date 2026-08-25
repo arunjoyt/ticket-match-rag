@@ -42,6 +42,10 @@ class MatchCache:
             row = cur.fetchone()
             return row[0] if row else None
 
+    def delete(self, ticket_name: str) -> None:
+        with closing(self._connect()) as conn, conn.cursor() as cur:
+            cur.execute("DELETE FROM ticket_matches_cache WHERE ticket_name = %s", (ticket_name,))
+
     def put(self, ticket_name: str, matches: list[dict]) -> None:
         with closing(self._connect()) as conn, conn.cursor() as cur:
             cur.execute(

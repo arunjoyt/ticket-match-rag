@@ -110,7 +110,7 @@ flowchart TB
 
 Three dashed edges, three asynchronous hops: Frappe's webhook dispatch (unchanged, its own background job); `index_ticket()`/`deindex_ticket()` enqueueing a refresh job, deduplicated so a burst of index mutations collapses into one pending job; and the RQ worker consuming that job on its own schedule, in its own process. Every other edge, including both branches inside `GET /tickets/{name}/matches`, is synchronous.
 
-Note that every route in `api/main.py` is still declared `async def`, but almost none of them `await` anything — `requests`, `sentence-transformers`, `qdrant-client`, and `psycopg2` are all synchronous libraries. A cache-hit request is a single fast Postgres lookup; a cache-miss request still blocks the process for the full live-pipeline duration (embed, search, rerank), same as before this cache existed. `async def` here is a FastAPI convention, not a concurrency guarantee.
+Note that every route in `api/main.py` is still declared `async def`, but almost none of them `await` anything — `requests`, `sentence-transformers`, `qdrant-client`, and `psycopg2` are all synchronous libraries. A cache-hit request is a single fast Postgres lookup; a cache-miss request still blocks the process for the full live-pipeline duration (embed, search, rerank), same as before this cache existed. `async def` here is a FastAPI convention, not a concurrency guarantee. See [docs/PERFORMANCE.md](PERFORMANCE.md) for what this actually costs under concurrent load, measured.
 
 ### Ingestion and the indexing choke point
 
