@@ -1,5 +1,7 @@
 # Stress and performance test results
 
+Implementer-facing detail: methodology, raw numbers, and how they tie back to specific architecture decisions. For a short, decision-facing version aimed at someone evaluating whether this system fits their requirements, see [PERFORMANCE_SUMMARY.md](PERFORMANCE_SUMMARY.md).
+
 `docs/ARCHITECTURE.md` already flags that every route in `api/main.py` is `async def` but nothing actually `await`s -- "a cache-miss request still blocks the process for the full live-pipeline duration... `async def` here is a FastAPI convention, not a concurrency guarantee." ADR 0006 accepts `worker/tasks.py`'s full-sweep-over-every-open-ticket refresh as a scaling ceiling, "fine at this project's scale." Neither of those was ever measured. This document puts numbers on both, plus a cache-hit/miss baseline and a breakdown of what a cache-miss actually spends its time on.
 
 **Tool:** `scripts/stress_test.py` (`python -m scripts.stress_test`) -- reruns anytime, e.g. after issue #6's prod deployment lands or issue #9's reranker fine-tuning changes the rerank cost measured here.
@@ -35,7 +37,7 @@ A cache hit is a single Postgres lookup, consistently ~10ms. A cache miss runs t
 | 10 | 26-30 req/s | 0.09-0.10s  | 1.09-1.24s | 0.33-0.37s |
 | 20 | 26-28 req/s | 0.63-0.71s  | 1.21-1.33s | 0.67-0.73s |
 
-**Throughput stays roughly flat (~26-30 req/s) from concurrency 5 upward, while p50 latency climbs 15-20x (0.04s to 0.65s) from concurrency 5 to 20.** That's the direct, empirical confirmation of `docs/ARCHITECTURE.md`'s theoretical claim: this single `uvicorn` process doesn't actually run requests concurrently. Under load, fast cache-hit requests queue up behind whichever slow cache-miss request is being processed -- most of the 40 requests per level are structurally cheap (cache hits), yet the *batch's* median latency still degrades sharply as more of them are in flight at once. A production deployment expecting concurrent traffic would need multiple `uvicorn` workers (or `gunicorn -k uvicorn.workers.UvicornWorker -w N`) for this to actually parallelize -- worth a line in `docs/DEPLOYMENT_PLAN.md`'s Part B once real traffic volume is known.
+**Throughput stays roughly flat (~26-30 req/s) from concurrency 5 upward, while p50 latency climbs 15-20x (0.04s to 0.65s) from concurrency 5 to 20.** That's the direct, empirical confirmation of `docs/ARCHITECTURE.md`'s theoretical claim: this single `uvicorn` process doesn't actually run requests concurrently. Under load, fast cache-hit requests queue up behind whichever slow cache-miss request is being processed -- most of the 40 requests per level are structurally cheap (cache hits), yet the *batch's* median latency still degrades sharply as more of them are in flight at once. The obvious fix is more `uvicorn` workers -- tested directly in section 6 below, with a more complicated answer than "yes" -- worth reading before assuming it's a solved problem for `docs/DEPLOYMENT_PLAN.md`'s Part B.
 
 ## 3. Component breakdown of a cache-miss call
 
@@ -77,7 +79,22 @@ Section 2's ramp is a synthetic worst case (40 requests fired as fast as possibl
 
 The distinct-tickets case is the real worst case, and it does scale roughly linearly with agent count (~0.4s/ticket x 20 ~ 8s here, consistent with section 3's per-ticket cost): every agent in that window waits for every uncached ticket ahead of them in the queue, including agents whose *own* ticket would otherwise be a fast hit.
 
-**When this actually happens:** not "20 agents working tickets" by itself -- ADR 0006's worker sweeps and recomputes Matches for every open ticket on every corpus-changing event, so in steady state an agent's ticket is almost always already cached (sub-second, unaffected by how many other agents are online). The real risk window is a **burst of new tickets arriving faster than the worker can sweep them**, or the first moments after a cold start / `POST /ingest/full`, when a cluster of agents could plausibly hit genuinely uncached tickets within the same few seconds. That's a bounded, identifiable scenario -- not a standing capacity problem -- but a real one, and multiple `uvicorn`/`gunicorn` workers (section 2's takeaway) is the direct mitigation if it turns out to matter at real traffic volume.
+**When this actually happens:** not "20 agents working tickets" by itself -- ADR 0006's worker sweeps and recomputes Matches for every open ticket on every corpus-changing event, so in steady state an agent's ticket is almost always already cached (sub-second, unaffected by how many other agents are online). The real risk window is a **burst of new tickets arriving faster than the worker can sweep them**, or the first moments after a cold start / `POST /ingest/full`, when a cluster of agents could plausibly hit genuinely uncached tickets within the same few seconds. That's a bounded, identifiable scenario -- not a standing capacity problem -- but a real one. See section 6 below for whether the obvious mitigation (more `uvicorn` workers) actually helps.
+
+## 6. Multi-worker scaling test
+
+Section 2's takeaway implied the obvious fix for the single-process bottleneck is `uvicorn --workers N` (or `gunicorn -k uvicorn.workers.UvicornWorker -w N`). Tested that directly rather than assuming it: `uvicorn api.main:app --workers 4` (`OMP_NUM_THREADS=2`, `MKL_NUM_THREADS=2` to avoid the more obvious failure mode of 4 processes each defaulting to all 8 CPU threads), each of the 4 worker processes warmed with 30-40 real requests first so none of them were paying the section-3-style first-inference tax mid-measurement.
+
+**Result: throughput did not improve, and was sometimes lower, than the single-process baseline** -- 0.7-1.9 req/s across concurrency 1-40, versus the single process's steady ~2.5-2.6 req/s (both isolated runs, nothing else competing for CPU at the time).
+
+Ruled out the two obvious confounds before accepting that result:
+- **Not thread oversubscription** -- same result with and without the `OMP_NUM_THREADS`/`MKL_NUM_THREADS` limits.
+- **Not the upstream Helpdesk dev server serializing `get_ticket()`** -- tested directly: 20 concurrent `get_ticket()` calls straight to Helpdesk complete in 0.38s, nowhere near the bottleneck.
+- **Not the multi-worker plumbing itself** -- cache-hit-only traffic (pure Postgres lookup, no CPU-bound work) hit **82-146 req/s** with 4 workers, well above single-process throughput for the same traffic. The workers do run in parallel; it's specifically the CPU-bound compute path (embed + rerank) that doesn't scale across them here.
+
+Most likely explanation, not confirmed further: memory-bandwidth or core contention specific to this test machine (Apple M1, 4 performance + 4 efficiency cores, not 8 uniform cores) -- four independent cross-encoder inference processes competing for the same limited fast-core/memory-bandwidth budget. A properly resourced multi-core server, not a laptop chip, is a plausible fix, but that's a hypothesis, not something measured here.
+
+**Practical takeaway:** don't treat `--workers N` as a free, given fix for the concurrency finding above. It needs its own validation against real target hardware before a production deployment (issue #6) relies on it -- the honest current answer is "single-process behavior is well characterized; multi-process behavior on this hardware was tested and didn't help; multi-process behavior on production-class hardware is untested."
 
 ## Baseline: `POST /ingest/full`
 
@@ -85,7 +102,8 @@ One run, full re-index of all 67 tickets: **2.5s** (~38ms/ticket -- no rerank in
 
 ## Takeaways
 
-1. **The single-process concurrency limitation is real, not theoretical**, and it affects *all* traffic (including cheap cache hits) whenever a slow request is in flight -- multiple `uvicorn`/`gunicorn` workers should be considered before issue #6's production deployment sees concurrent load, not treated as a later optimization. In practice it's bounded to a specific window (a burst of uncached tickets, not "N agents" by itself, per section 5) rather than a standing problem -- but that window is real: ~8s worst-case wait for the last of 20 agents if it lands on a cluster of genuinely uncached tickets.
-2. **The cross-encoder rerank is the bottleneck**, by a wide margin (85-90% of a cache-miss). Issue #9's reranker fine-tuning should track this latency alongside its accuracy goals -- a slower model wins nothing if it makes cache-miss latency (and worker-sweep duration) meaningfully worse.
-3. **The worker-sweep scaling ceiling (ADR 0006) is now a number, not a feeling**: comfortable through the low hundreds of open tickets, multi-minute beyond that. Worth re-running this script once issue #6's prod deployment exists and real open-ticket volume is known, to confirm the ceiling still holds.
-4. **Cache-aside (ADR 0007) is doing real work**: a hit is ~25-45x faster than a miss, so keeping hits the common case (via the worker sweep) is load-bearing for the concurrency finding above, not just a staleness tradeoff.
+1. **The single-process concurrency limitation is real, not theoretical**, and it affects *all* traffic (including cheap cache hits) whenever a slow request is in flight. In practice it's bounded to a specific window (a burst of uncached tickets, not "N agents" by itself, per section 5) rather than a standing problem -- but that window is real: ~8s worst-case wait for the last of 20 agents if it lands on a cluster of genuinely uncached tickets.
+2. **The obvious fix (more `uvicorn` workers) is not a given -- tested, and it didn't help on this hardware** (section 6). Don't write "add workers" into issue #6's production deployment plan as a solved problem; it needs its own validation against production-class hardware.
+3. **The cross-encoder rerank is the bottleneck**, by a wide margin (85-90% of a cache-miss). Issue #9's reranker fine-tuning should track this latency alongside its accuracy goals -- a slower model wins nothing if it makes cache-miss latency (and worker-sweep duration) meaningfully worse.
+4. **The worker-sweep scaling ceiling (ADR 0006) is now a number, not a feeling**: comfortable through the low hundreds of open tickets, multi-minute beyond that. Worth re-running this script once issue #6's prod deployment exists and real open-ticket volume is known, to confirm the ceiling still holds.
+5. **Cache-aside (ADR 0007) is doing real work**: a hit is ~25-45x faster than a miss, so keeping hits the common case (via the worker sweep) is load-bearing for the concurrency finding above, not just a staleness tradeoff.
