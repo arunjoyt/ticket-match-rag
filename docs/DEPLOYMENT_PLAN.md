@@ -26,6 +26,11 @@ Following `vps-ref-contabo/RUNBOOK.md`'s "Adding a brand-new app" + "Adding a br
 5. Generate a service-account API key/secret: `bench --site helpdesk.22logic.com execute frappe.core.doctype.user.user.generate_keys --args "['Administrator']"` (same command used for the dev instance).
 6. Seed data: extend `scripts/seed_helpdesk.py` with a `--base-url`/env-var override (currently hardcoded to `http://helpdesk.localhost:8000`), then run it against `https://helpdesk.22logic.com` with the new API creds.
 
+**A3. Bridge app + Vue patch (ADR 0006, 0008, 0009):**
+1. `bench get-app https://github.com/arunjoyt/ticket-match-bridge && bench --site helpdesk.22logic.com install-app ticket_match_bridge`.
+2. `bench --site helpdesk.22logic.com set-config ticket_match_api_url https://ticket-match.22logic.com` and `set-config ticket_match_api_key <same API_KEY as Part B's .env>`.
+3. Manually reapply the Vue edit: copy `frappe_bridge/helpdesk-vue-patch/TicketDetailsTab.vue` and `types.ts` over the matching files in the prod bench's `apps/helpdesk/desk/src/`. This is **not** a `bench` step and won't survive a future Helpdesk version bump on its own — it's an uncommitted in-place edit to Helpdesk's own source (confirmed on the dev bench: `git status` shows it as local modifications on top of Helpdesk's pinned commit, not a real patch file). Frappe has no override/hook mechanism for Helpdesk's Vue SPA the way it does for backend methods (`override_whitelisted_methods`, used for the bridge app's own half of this) or classic Desk forms (`Client Script`) — so after any `bench update` that touches Helpdesk, re-diff `TicketDetailsTab.vue`/`types.ts` against the copies in `frappe_bridge/helpdesk-vue-patch/` and reapply by hand before assuming the Similar Tickets panel still shows resolution snippets.
+
 ## Part B — ticket-match-rag on a new AWS EC2 instance
 
 Mirrors Contract Intelligence's proven pattern (`contract-intelligence/docs/DEPLOYMENT.md`): manual console provisioning, no CI/CD, git-pull-and-build on the instance, certbot standalone TLS, plain `.env` secrets.
@@ -68,5 +73,5 @@ Also needed once Part A's Helpdesk site exists: `bench --site helpdesk.22logic.c
 
 ## Verification
 
-- Part A: `bench --site helpdesk.22logic.com list-apps` shows `helpdesk` + `telephony`; browser-verify login; seed script reports 48 Reusable Tickets, matching the dev run; a manual `curl` against the new API key confirms auth works.
+- Part A: `bench --site helpdesk.22logic.com list-apps` shows `helpdesk` + `telephony` + `ticket_match_bridge`; browser-verify login; seed script reports 48 Reusable Tickets, matching the dev run; a manual `curl` against the new API key confirms auth works; open a real ticket in the agent UI and confirm the Similar Tickets panel shows resolution snippets (proves A3's manual Vue reapply actually landed, not just that the app installed).
 - Part B: `curl https://ticket-match.22logic.com/health` (no auth needed); `POST /ingest/full` and spot-check `/tickets/{name}/matches` for known Duplicate Cluster members (both `-H "Authorization: Bearer $API_KEY"`), same shape as Phase 1's verification.
