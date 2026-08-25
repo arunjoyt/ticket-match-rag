@@ -77,5 +77,5 @@ Also needed once Part A's Helpdesk site exists: `bench --site helpdesk.22logic.c
 
 ## Verification
 
-- Part A: `bench --site helpdesk.22logic.com list-apps` shows `helpdesk` + `telephony` + `ticket_match_bridge`; browser-verify login; seed script reports 48 Reusable Tickets, matching the dev run; a manual `curl` against the new API key confirms auth works; open a real ticket in the agent UI and confirm the Similar Tickets panel shows resolution snippets (proves A3's manual Vue reapply actually landed, not just that the app installed).
+- Part A: `bench --site helpdesk.22logic.com list-apps` shows `helpdesk` + `telephony` + `ticket_match_bridge`; browser-verify login; seed script reports 72 tickets total (67 Reusable Tickets: 40 cluster members + 27 distractors, plus 5 unresolved demo queries) -- verified against production 2026-08-25; a manual `curl` against the new API key confirms auth works; open a real ticket in the agent UI and confirm the Similar Tickets panel shows resolution snippets (proves A3's manual Vue reapply actually landed, not just that the app installed).
 - Part B: `curl https://ticket-match.22logic.com/health` (no auth needed); `POST /ingest/full` and spot-check `/tickets/{name}/matches` for known Duplicate Cluster members (both `-H "Authorization: Bearer $API_KEY"`), same shape as Phase 1's verification.
