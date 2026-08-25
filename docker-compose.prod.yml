@@ -1,0 +1,62 @@
+# Production topology overlay — see docs/DEPLOYMENT.md.
+#
+# Usage:
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+#
+# Adds app, worker, and nginx on top of the base qdrant/postgres/redis
+# infra (docker-compose.yml). qdrant/postgres/redis stay loopback-bound —
+# the base file already does that, this overlay only adds restart policies
+# to them. nginx is the sole service binding public ports (80/443).
+
+services:
+  qdrant:
+    restart: unless-stopped
+
+  postgres:
+    restart: unless-stopped
+
+  redis:
+    restart: unless-stopped
+
+  app:
+    build: .
+    restart: unless-stopped
+    depends_on:
+      - qdrant
+      - postgres
+      - redis
+    env_file: .env
+    environment:
+      # Override localhost URLs (config.py's dev defaults) with container
+      # service names.
+      QDRANT_URL: http://qdrant:6333
+      DATABASE_URL: postgresql://ticket_match:ticket_match@postgres:5432/ticket_match
+      REDIS_URL: redis://redis:6379/0
+
+  worker:
+    build: .
+    restart: unless-stopped
+    command: ["python", "-m", "worker.run"]
+    depends_on:
+      - qdrant
+      - postgres
+      - redis
+    env_file: .env
+    environment:
+      QDRANT_URL: http://qdrant:6333
+      DATABASE_URL: postgresql://ticket_match:ticket_match@postgres:5432/ticket_match
+      REDIS_URL: redis://redis:6379/0
+
+  nginx:
+    image: nginx:alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    env_file: .env
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/templates:/etc/nginx/templates:ro
+      - /etc/letsencrypt:/etc/letsencrypt:ro
+    depends_on:
+      - app

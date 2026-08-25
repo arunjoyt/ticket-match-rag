@@ -2,11 +2,15 @@
 
 Two parts: a real Helpdesk instance on the existing Contabo VPS bench, and ticket-match-rag itself on a new AWS EC2 instance. The local Docker Helpdesk instance stays in place for iterating; this is the production target.
 
-**Status: planned, not yet executed.** Nothing below has been run against production.
+**Status: Part B1 (repo artifacts) done. Everything else below is still planned, not yet executed against production.**
+
+B1 is done: `nginx/nginx.conf`, `nginx/templates/ticket-match-rag.conf.template`, `docker-compose.prod.yml`, `.env.example`'s `API_DOMAIN` entry, and `docs/DEPLOYMENT.md` (the executed-reference runbook for Part B — follow that file, not the B2/B3 steps below, once you're actually running commands). This section stays as the plan/rationale trail.
 
 ## New finding
 
 `frappe/helpdesk`'s `pyproject.toml` (`main` branch) declares `telephony = ">=0.0.1,<1.0.0"` under `[tool.bench.frappe-dependencies]` — Helpdesk requires Telephony. Both apps go into `apps.json.tmpl` together, matching what the local dev instance's `init.sh` already installs.
+
+**Correction (caught by the first rebuild attempt, run 32857786699):** `frappe/telephony` has no `main` branch — its only branch is `develop`. The first `apps.json.tmpl` entry used `"branch": "main"`, which failed at `bench init`'s clone step (`Remote branch main not found in upstream upstream`) and aborted the build before the `deploy` job ran, so no live site was touched. Fixed to `"branch": "develop"` and re-pushed.
 
 ## Part A — helpdesk.22logic.com on Contabo
 

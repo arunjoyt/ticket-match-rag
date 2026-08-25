@@ -1,0 +1,41 @@
+# Substituted by the official nginx:alpine entrypoint (20-envsubst-on-templates.sh)
+# into /etc/nginx/conf.d/ticket-match-rag.conf on every container start, using
+# API_DOMAIN from the environment (see .env / docker-compose.prod.yml).
+#
+# Only variables that exist as real environment variables get substituted —
+# nginx's own runtime variables ($host, $scheme, $request_uri, etc.) are left
+# untouched since they aren't OS environment variables.
+
+# Redirect all HTTP traffic to HTTPS.
+# `default_server` makes this win over the base nginx:alpine image's leftover
+# /etc/nginx/conf.d/default.conf (a "Welcome to nginx" page on port 80,
+# server_name localhost) — without it, that file sorts first alphabetically
+# and silently catches any request with a Host header that isn't ours (e.g.
+# bots hitting the server's raw IP).
+server {
+    listen 80 default_server;
+    server_name ${API_DOMAIN};
+    return 301 https://$host$request_uri;
+}
+
+# FastAPI backend — the only public surface (no frontend, ADR 0010).
+server {
+    listen 443 ssl;
+    server_name ${API_DOMAIN};
+
+    ssl_certificate     /etc/letsencrypt/live/${API_DOMAIN}/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/${API_DOMAIN}/privkey.pem;
+    ssl_protocols       TLSv1.2 TLSv1.3;
+    ssl_ciphers         HIGH:!aNULL:!MD5;
+    ssl_session_cache   shared:SSL:10m;
+
+    location / {
+        set $upstream_app http://app:8000;
+        proxy_pass $upstream_app;
+        proxy_read_timeout 60s;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+}
