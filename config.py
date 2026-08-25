@@ -36,6 +36,10 @@ MATCH_THRESHOLD = float(os.environ.get("MATCH_THRESHOLD", "0.6221"))
 QDRANT_URL = os.environ.get("QDRANT_URL", "http://localhost:6333")
 QDRANT_COLLECTION = os.environ.get("QDRANT_COLLECTION", "tickets")
 
+# Match cache (ADR 0006/0007) and its RQ broker.
+DATABASE_URL = os.environ.get("DATABASE_URL", "postgresql://ticket_match:ticket_match@localhost:5432/ticket_match")
+REDIS_URL = os.environ.get("REDIS_URL", "redis://localhost:6379/0")
+
 HELPDESK_URL = os.environ.get("HELPDESK_URL", "http://helpdesk.localhost:8000")
 HELPDESK_API_KEY = os.environ.get("HELPDESK_API_KEY")
 HELPDESK_API_SECRET = os.environ.get("HELPDESK_API_SECRET")

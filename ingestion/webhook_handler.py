@@ -29,9 +29,11 @@ from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request
 from requests.exceptions import HTTPError
+from rq import Queue
 
 from ingestion.embedder import Embedder, SparseEmbedder, SparseVector, match_text
 from ingestion.helpdesk_client import HelpdeskClient
+from retrieval.indexing import deindex_ticket, index_ticket
 from retrieval.vector_store import VectorStore
 
 SIGNATURE_HEADER = "X-Frappe-Webhook-Signature"
@@ -70,6 +72,7 @@ def create_webhook_router(
     embedder: Embedder,
     sparse_embedder: SparseEmbedder,
     vector_store: VectorStore,
+    queue: Queue,
     webhook_secret: str | None,
 ) -> APIRouter:
     router = APIRouter()
@@ -88,15 +91,15 @@ def create_webhook_router(
             ticket = helpdesk_client.get_ticket(ticket_name)
         except HTTPError as exc:
             if exc.response is not None and exc.response.status_code == 404:
-                vector_store.delete_by_ticket_name(ticket_name)
+                deindex_ticket(ticket_name, vector_store, queue)
                 return {"status": "deleted", "ticket_name": ticket_name}
             raise
 
-        vector_store.delete_by_ticket_name(ticket_name)
+        deindex_ticket(ticket_name, vector_store, queue)
 
         if ticket.get("resolution_details"):
             dense_vector, sparse_vector, doc_payload = prepare_doc_for_indexing(ticket, embedder, sparse_embedder)
-            vector_store.upsert_ticket(ticket_name, dense_vector, sparse_vector, doc_payload)
+            index_ticket(ticket_name, dense_vector, sparse_vector, doc_payload, vector_store, queue)
             return {"status": "indexed", "ticket_name": ticket_name}
 
         return {"status": "removed", "ticket_name": ticket_name}
