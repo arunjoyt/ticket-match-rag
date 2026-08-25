@@ -7,7 +7,7 @@ measures how much. ADR 0006 accepts worker/tasks.py's full-sweep refresh as
 a scaling ceiling "fine at this project's scale" -- this projects what that
 ceiling actually is.
 
-Four things, each printed as its own section:
+Five things, each printed as its own section:
   1. Single-request cache-hit vs. cache-miss latency (cache-miss forced by
      deleting specific rows via db.cache.MatchCache.delete()).
   2. Concurrency ramp: N concurrent GET /tickets/{name}/matches requests
@@ -19,6 +19,13 @@ Four things, each printed as its own section:
   4. Worker-sweep projection: mean single-ticket compute_matches() cost,
      projected out to open-ticket counts beyond today's actual corpus size --
      a labeled projection, not a live run against inflated Helpdesk data.
+  5. N-agents-at-once, cold cache: the realistic worst case behind section
+     2's synthetic ramp -- what a burst of agents actually experiences,
+     split into "many requests over a handful of shared uncached tickets"
+     (the single-process serialization doubles as a lock against redundant
+     recompute -- only the first request per ticket pays the miss cost) vs.
+     "N truly distinct uncached tickets at once" (no such luck, cost scales
+     with unique tickets, not request count).
 
 Assumes the API is already running (models warm at process startup, per
 retrieval/matching.py's build_pipeline()) and the corpus is already indexed.
@@ -49,6 +56,7 @@ REQUESTS_PER_LEVEL = 40
 SINGLE_REQUEST_REPEATS = 20
 COMPONENT_BREAKDOWN_ROUNDS = 2  # x len(TICKET_POOL) samples
 PROJECTED_OPEN_TICKET_COUNTS = [50, 200, 500]
+N_AGENTS = 20
 
 
 @dataclass
@@ -90,6 +98,12 @@ def main() -> None:
     print("4. Worker-sweep projection")
     print("=" * 70)
     _report_sweep_projection(per_ticket_seconds)
+
+    print()
+    print("=" * 70)
+    print(f"5. {N_AGENTS} agents at once, cold cache")
+    print("=" * 70)
+    _report_n_agents_cold_cache(args.base_url, headers, cache)
 
 
 def _timed_get(url: str, headers: dict) -> Timing:
@@ -180,6 +194,38 @@ def _report_component_breakdown(cache: MatchCache) -> float:
     print(f"\ncompute_matches() end-to-end (single call): {time.perf_counter() - t0:.3f}s")
 
     return statistics.mean(total_seconds[1:])
+
+
+def _report_n_agents_cold_cache(base_url: str, headers: dict, cache: MatchCache) -> None:
+    # Scenario A: N requests over the existing (small) ticket pool -- many
+    # agents glancing at a handful of newly-created tickets.
+    for ticket in TICKET_POOL:
+        cache.delete(ticket)
+    urls = [f"{base_url}/tickets/{TICKET_POOL[i % len(TICKET_POOL)]}/matches" for i in range(N_AGENTS)]
+    _timed_batch(f"shared pool ({len(TICKET_POOL)} unique tickets, {N_AGENTS} requests)", urls, headers)
+
+    # Scenario B: N truly distinct tickets, all uncached at once -- the real
+    # worst case, no request collapses onto an already-in-flight compute.
+    pipeline = build_pipeline()
+    distinct_names = [t["name"] for t in pipeline.helpdesk_client.list_reusable_tickets()[:N_AGENTS]]
+    for name in distinct_names:
+        cache.delete(name)
+    urls = [f"{base_url}/tickets/{name}/matches" for name in distinct_names]
+    _timed_batch(f"{len(distinct_names)} distinct uncached tickets", urls, headers)
+
+
+def _timed_batch(label: str, urls: list[str], headers: dict) -> None:
+    start = time.perf_counter()
+    with ThreadPoolExecutor(max_workers=len(urls)) as pool:
+        results = list(pool.map(lambda u: _timed_get(u, headers), urls))
+    wall_seconds = time.perf_counter() - start
+
+    ok_seconds = sorted(t.seconds for t in results if t.ok)
+    errors = sum(1 for t in results if not t.ok)
+    print(f"\n{label}: wall-clock={wall_seconds:.2f}s, {errors} errors")
+    if ok_seconds:
+        mid = ok_seconds[len(ok_seconds) // 2]
+        print(f"  per-request wait: min={ok_seconds[0]:.2f}s median={mid:.2f}s max={ok_seconds[-1]:.2f}s")
 
 
 def _report_sweep_projection(per_ticket_seconds: float) -> None:

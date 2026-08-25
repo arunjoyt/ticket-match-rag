@@ -64,13 +64,28 @@ The very first sample paid a one-time cost not present in the already-running AP
 
 These are projections (per-ticket cost x N), not live runs against an inflated corpus -- generating hundreds of fake Helpdesk tickets just to time this would pollute the seeded dev instance that `data/seed_manifest.json` treats as eval ground truth. At today's actual scale (5 open tickets) a sweep is sub-2-seconds; ADR 0006's "fine at this project's scale, revisit if it stops being fine" holds comfortably through at least the low hundreds, and starts costing multiple minutes per corpus-changing event somewhere past that -- a concrete number to check issue #6's prod deployment against once real open-ticket volume is known, rather than the qualitative "fine for now" ADR 0006 shipped with.
 
+## 5. 20 agents at once, cold cache
+
+Section 2's ramp is a synthetic worst case (40 requests fired as fast as possible) -- it doesn't map cleanly onto "N helpdesk agents are online at once," since real agents arrive spread out over time, not in one burst. This section asks the sharper, realistic question directly: if 20 agents happened to load the ticket panel at the same moment, what would they actually feel? Two variants, both with every relevant cache row deleted first to force a genuinely cold cache:
+
+| scenario | wall-clock (all complete) | median wait | worst-case wait |
+|---|---|---|---|
+| 20 requests over 5 shared uncached tickets | 2.44-2.52s | 2.32-2.44s | 2.42-2.52s |
+| 20 truly distinct uncached tickets | 8.14-8.77s | 4.65-5.18s | 8.11-8.75s |
+
+**These two numbers tell different stories.** In the shared-pool case, cost scales with *unique* tickets, not request count: because the server processes requests strictly one at a time, by the time it gets around to the 2nd, 3rd, or 4th request for the same ticket, an earlier one has usually already finished and cached the result -- only the first request per ticket actually pays the miss cost, the rest become cheap hits. The same serialization that causes the queueing delay also happens to prevent redundant recompute (no request coalescing needed to get that benefit here, it falls out of the single-process design for free).
+
+The distinct-tickets case is the real worst case, and it does scale roughly linearly with agent count (~0.4s/ticket x 20 ~ 8s here, consistent with section 3's per-ticket cost): every agent in that window waits for every uncached ticket ahead of them in the queue, including agents whose *own* ticket would otherwise be a fast hit.
+
+**When this actually happens:** not "20 agents working tickets" by itself -- ADR 0006's worker sweeps and recomputes Matches for every open ticket on every corpus-changing event, so in steady state an agent's ticket is almost always already cached (sub-second, unaffected by how many other agents are online). The real risk window is a **burst of new tickets arriving faster than the worker can sweep them**, or the first moments after a cold start / `POST /ingest/full`, when a cluster of agents could plausibly hit genuinely uncached tickets within the same few seconds. That's a bounded, identifiable scenario -- not a standing capacity problem -- but a real one, and multiple `uvicorn`/`gunicorn` workers (section 2's takeaway) is the direct mitigation if it turns out to matter at real traffic volume.
+
 ## Baseline: `POST /ingest/full`
 
 One run, full re-index of all 67 tickets: **2.5s** (~38ms/ticket -- no rerank in this path, just embed + Qdrant upsert). Not load-tested; it's an admin/rare operation, not a hot path.
 
 ## Takeaways
 
-1. **The single-process concurrency limitation is real, not theoretical**, and it affects *all* traffic (including cheap cache hits) whenever a slow request is in flight -- multiple `uvicorn`/`gunicorn` workers should be considered before issue #6's production deployment sees concurrent load, not treated as a later optimization.
+1. **The single-process concurrency limitation is real, not theoretical**, and it affects *all* traffic (including cheap cache hits) whenever a slow request is in flight -- multiple `uvicorn`/`gunicorn` workers should be considered before issue #6's production deployment sees concurrent load, not treated as a later optimization. In practice it's bounded to a specific window (a burst of uncached tickets, not "N agents" by itself, per section 5) rather than a standing problem -- but that window is real: ~8s worst-case wait for the last of 20 agents if it lands on a cluster of genuinely uncached tickets.
 2. **The cross-encoder rerank is the bottleneck**, by a wide margin (85-90% of a cache-miss). Issue #9's reranker fine-tuning should track this latency alongside its accuracy goals -- a slower model wins nothing if it makes cache-miss latency (and worker-sweep duration) meaningfully worse.
 3. **The worker-sweep scaling ceiling (ADR 0006) is now a number, not a feeling**: comfortable through the low hundreds of open tickets, multi-minute beyond that. Worth re-running this script once issue #6's prod deployment exists and real open-ticket volume is known, to confirm the ceiling still holds.
 4. **Cache-aside (ADR 0007) is doing real work**: a hit is ~25-45x faster than a miss, so keeping hits the common case (via the worker sweep) is load-bearing for the concurrency finding above, not just a staleness tradeoff.
