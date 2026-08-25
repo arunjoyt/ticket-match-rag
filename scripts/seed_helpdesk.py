@@ -20,16 +20,20 @@ Writes data/seed_manifest.json recording ground truth (which ticket belongs to
 which cluster, and each ticket's variant/kind) since Helpdesk itself has no
 concept of a Duplicate Cluster -- that's a domain concept of this project's
 eval harness, not Helpdesk's model.
+
+Target site defaults to the local dev instance; override for a real site
+(e.g. the production helpdesk.22logic.com bench, docs/DEPLOYMENT_PLAN.md
+Part A2.6) via --base-url/--admin-password or the SEED_BASE_URL/
+SEED_ADMIN_PASSWORD env vars.
 """
 
+import argparse
 import json
+import os
 from pathlib import Path
 
 import requests
 
-BASE_URL = "http://helpdesk.localhost:8000"
-ADMIN_USER = "Administrator"
-ADMIN_PASS = "admin"
 RAISED_BY = "requester@example.com"
 
 MANIFEST_PATH = Path(__file__).resolve().parent.parent / "data" / "seed_manifest.json"
@@ -498,17 +502,17 @@ DEMO_QUERIES = [
 ]
 
 
-def login(session: requests.Session) -> None:
+def login(session: requests.Session, base_url: str, admin_user: str, admin_pass: str) -> None:
     resp = session.post(
-        f"{BASE_URL}/api/method/login",
-        data={"usr": ADMIN_USER, "pwd": ADMIN_PASS},
+        f"{base_url}/api/method/login",
+        data={"usr": admin_user, "pwd": admin_pass},
     )
     resp.raise_for_status()
 
 
-def create_ticket(session: requests.Session, subject: str, description: str) -> str:
+def create_ticket(session: requests.Session, base_url: str, subject: str, description: str) -> str:
     resp = session.post(
-        f"{BASE_URL}/api/resource/HD Ticket",
+        f"{base_url}/api/resource/HD Ticket",
         json={
             "subject": subject,
             "description": f"<p>{description}</p>",
@@ -520,17 +524,40 @@ def create_ticket(session: requests.Session, subject: str, description: str) -> 
     return resp.json()["data"]["name"]
 
 
-def resolve_ticket(session: requests.Session, name: str, resolution: str) -> None:
+def resolve_ticket(session: requests.Session, base_url: str, name: str, resolution: str) -> None:
     resp = session.put(
-        f"{BASE_URL}/api/resource/HD Ticket/{name}",
+        f"{base_url}/api/resource/HD Ticket/{name}",
         json={"resolution_details": f"<p>{resolution}</p>", "status": "Resolved"},
     )
     resp.raise_for_status()
 
 
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--base-url",
+        default=os.environ.get("SEED_BASE_URL", "http://helpdesk.localhost:8000"),
+        help="Helpdesk site URL (default: local dev instance, or $SEED_BASE_URL)",
+    )
+    parser.add_argument(
+        "--admin-user",
+        default=os.environ.get("SEED_ADMIN_USER", "Administrator"),
+        help="Login user (default: Administrator, or $SEED_ADMIN_USER)",
+    )
+    parser.add_argument(
+        "--admin-password",
+        default=os.environ.get("SEED_ADMIN_PASSWORD", "admin"),
+        help="Login password (default: 'admin' for local dev, or $SEED_ADMIN_PASSWORD)",
+    )
+    return parser.parse_args()
+
+
 def main() -> None:
+    args = parse_args()
+    base_url = args.base_url
+
     session = requests.Session()
-    login(session)
+    login(session, base_url, args.admin_user, args.admin_password)
 
     manifest = {"clusters": [], "distractors": [], "demo_queries": []}
 
@@ -538,8 +565,8 @@ def main() -> None:
         members = []
         for member in cluster["members"]:
             variant = member.get("variant", "standard")
-            name = create_ticket(session, member["subject"], member["description"])
-            resolve_ticket(session, name, member["resolution"])
+            name = create_ticket(session, base_url, member["subject"], member["description"])
+            resolve_ticket(session, base_url, name, member["resolution"])
             members.append({"ticket_name": name, "variant": variant})
             print(f"[cluster:{cluster['id']}:{variant}] {name} - {member['subject']}")
         manifest["clusters"].append({"id": cluster["id"], "members": members})
@@ -548,15 +575,15 @@ def main() -> None:
         kind = distractor.get("kind") or (
             "topic-adjacent" if distractor["adjacent_to"] else "pure-noise"
         )
-        name = create_ticket(session, distractor["subject"], distractor["description"])
-        resolve_ticket(session, name, distractor["resolution"])
+        name = create_ticket(session, base_url, distractor["subject"], distractor["description"])
+        resolve_ticket(session, base_url, name, distractor["resolution"])
         print(f"[distractor:{kind}] {name} - {distractor['subject']}")
         manifest["distractors"].append(
             {"ticket_name": name, "adjacent_to": distractor["adjacent_to"], "kind": kind}
         )
 
     for query in DEMO_QUERIES:
-        name = create_ticket(session, query["subject"], query["description"])
+        name = create_ticket(session, base_url, query["subject"], query["description"])
         print(f"[demo-query] {name} - {query['subject']}")
         manifest["demo_queries"].append(
             {"ticket_name": name, "expected_cluster": query["expected_cluster"]}
