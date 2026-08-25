@@ -1,5 +1,5 @@
 ---
-status: proposed
+status: partially implemented
 ---
 
 # Background-computed Matches, cached in Postgres, served natively inside Helpdesk
@@ -62,4 +62,10 @@ New services in `docker-compose.yml`: `postgres`, `redis`, `worker` (the RQ work
 
 Not addressed here: authentication on the API (issue #7, still open and now more relevant with a new external caller); production wiring of the Helpdesk-bridge-to-API path once a real Helpdesk instance exists (`docs/DEPLOYMENT_PLAN.md`, same local-dev-only caveat as ADR 0005's `host.docker.internal`).
 
-**Status: proposed, not yet implemented.**
+## Verification
+
+Points 1-3 (the Postgres cache, the RQ worker, and the `retrieval/indexing.py` choke point) implemented and verified end-to-end (issue #10); point 4 (the Frappe bridge app + Vue edit) deliberately deferred to a follow-up issue -- see ADR 0007, which also supersedes point 1's `corpus_version` gate.
+
+One deviation from what's written above: `worker` was **not** added as a `docker-compose.yml` service. Locally the API already runs directly via `uvicorn` rather than containerized (the `Dockerfile` is for `docker-compose.prod.yml` only); the worker follows that same existing pattern and runs directly via `python -m worker.run`, not as a new compose service. Only `postgres` and `redis` (infra, like `qdrant`) were added to `docker-compose.yml`. Revisit when `docker-compose.prod.yml` is built (`docs/DEPLOYMENT_PLAN.md`).
+
+**Status: partially implemented -- points 1-3 done, point 4 (Frappe bridge) deferred.**

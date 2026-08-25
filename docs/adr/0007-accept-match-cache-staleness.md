@@ -1,5 +1,5 @@
 ---
-status: proposed
+status: implemented
 ---
 
 # Accept Match cache staleness, drop the corpus_version read gate
@@ -32,4 +32,8 @@ Instead of removing the version check outright, cap it -- serve a stale row if i
 
 `db/schema.sql` (ADR 0006, not yet written) drops the `corpus_version` table; `ticket_matches_cache` keeps `computed_at` only. `retrieval/indexing.py`'s `index_ticket()` / `deindex_ticket()` drop the version-bump step, keeping the Qdrant write and the deduplicated refresh-enqueue. `api/main.py`'s `get_matches` cache-aside branch simplifies to an existence check instead of a version comparison. `docs/PROPOSED_ARCHITECTURE.md` reflects this design as the current proposal. ADR 0006 is left as written and superseded on this one point, not edited, per this repo's convention of ADRs as a historical record rather than living documents.
 
-**Status: proposed, not yet implemented.**
+## Verification
+
+Implemented per the plan above with no deviations: `db/schema.sql` has no `corpus_version` table, `ticket_matches_cache` keeps only `computed_at`, and `get_matches` (api/main.py) serves a cached row unconditionally on any hit. Verified end-to-end locally (issue #10): a fresh ticket_name misses and gets cached; a repeat call hits the cache with identical content; a webhook event enqueues the RQ refresh job and a second event before the worker runs collapses into the same pending job (dedup); running the worker sweeps every open ticket and advances `computed_at` on all of them, including the already-cached one. `eval/run.py` unchanged post-wiring, as expected -- this touches the read path's caching, not retrieval quality.
+
+**Status: implemented.**
