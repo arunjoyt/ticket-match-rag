@@ -46,8 +46,10 @@ HELPDESK_API_SECRET = os.environ.get("HELPDESK_API_SECRET")
 
 WEBHOOK_SECRET = os.environ.get("WEBHOOK_SECRET")
 
-# Where the demo UI (ui/app.py) reaches the FastAPI service.
-API_BASE_URL = os.environ.get("API_BASE_URL", "http://localhost:8000")
+# Gates POST /ingest/full and GET /tickets/{name}/matches (api/auth.py) --
+# same fail-closed rule as WEBHOOK_SECRET: unset means every protected
+# request is rejected, never validated against an empty-string key.
+API_KEY = os.environ.get("API_KEY")
 
 # Where scripts/register_webhook.py points Helpdesk's Webhook doctype so it
 # can deliver HD Ticket events to /webhook/helpdesk. host.docker.internal,

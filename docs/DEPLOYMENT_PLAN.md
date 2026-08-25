@@ -31,10 +31,10 @@ Following `vps-ref-contabo/RUNBOOK.md`'s "Adding a brand-new app" + "Adding a br
 Mirrors Contract Intelligence's proven pattern (`contract-intelligence/docs/DEPLOYMENT.md`): manual console provisioning, no CI/CD, git-pull-and-build on the instance, certbot standalone TLS, plain `.env` secrets.
 
 **B1. Repo artifacts (built directly in this repo, not yet done):**
-- `nginx/nginx.conf` + `nginx/templates/ticket-match-rag.conf.template` — mirrors Contract Intelligence's `nginx/` structure, but single domain (`API_DOMAIN` only — no frontend split yet, since the Phase 2 demo UI doesn't exist).
+- `nginx/nginx.conf` + `nginx/templates/ticket-match-rag.conf.template` — mirrors Contract Intelligence's `nginx/` structure, but single domain (`API_DOMAIN` only — the standalone demo UI was retired (ADR 0010), so there's no separate frontend to split traffic for).
 - `docker-compose.prod.yml` — adds `app` (built from the existing `Dockerfile`) and `nginx`; only `nginx` binds host ports 80/443; `qdrant` stays loopback-only; every service `restart: unless-stopped`; `env_file: .env`.
 - `docs/DEPLOYMENT.md` — the actual ops runbook once this is live (this file is the plan; that one will be the executed reference, mirroring how `vps-ref-contabo`'s own `CD-SETUP.md` describes itself as "the copy of record" after a plan became reality).
-- `.env.example` gets an `API_DOMAIN` entry.
+- `.env.example` gets an `API_DOMAIN` entry — it already has `API_KEY` (ADR 0009).
 
 **B2. AWS provisioning (console, real billable action):**
 1. Launch `t3.medium` (2 vCPU/4GB), Ubuntu 22.04 LTS, 20GB gp3, same region as Contract Intelligence's instance.
@@ -51,12 +51,15 @@ sudo apt install -y docker-compose-plugin certbot
 git clone https://github.com/arunjoyt/ticket-match-rag && cd ticket-match-rag
 cp .env.example .env   # fill in: HELPDESK_URL=https://helpdesk.22logic.com,
                         # HELPDESK_API_KEY/SECRET from A2.5, WEBHOOK_SECRET via openssl rand -hex 32,
+                        # API_KEY via openssl rand -hex 32 (ADR 0009 -- required, api/auth.py fails closed if unset),
                         # API_DOMAIN=ticket-match.22logic.com
 sudo certbot certonly --standalone -d ticket-match.22logic.com
 docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
-curl -X POST http://localhost:8000/ingest/full
+curl -X POST http://localhost:8000/ingest/full -H "Authorization: Bearer $API_KEY"
 ```
 Cron: `0 3 * * * certbot renew --quiet && docker compose -f docker-compose.yml -f docker-compose.prod.yml exec nginx nginx -s reload`.
+
+Also needed once Part A's Helpdesk site exists: `bench --site helpdesk.22logic.com set-config ticket_match_api_key <same API_KEY>`, alongside the existing `ticket_match_api_url` config — the bridge app (issue #5's own install step, not detailed here) sends this as `Authorization: Bearer` on every call into this API.
 
 ## Execution notes
 
@@ -66,4 +69,4 @@ Cron: `0 3 * * * certbot renew --quiet && docker compose -f docker-compose.yml -
 ## Verification
 
 - Part A: `bench --site helpdesk.22logic.com list-apps` shows `helpdesk` + `telephony`; browser-verify login; seed script reports 48 Reusable Tickets, matching the dev run; a manual `curl` against the new API key confirms auth works.
-- Part B: `curl https://ticket-match.22logic.com/health`; `POST /ingest/full` against the real seeded prod Helpdesk; spot-check `/tickets/{name}/matches` for known Duplicate Cluster members, same shape as Phase 1's verification.
+- Part B: `curl https://ticket-match.22logic.com/health` (no auth needed); `POST /ingest/full` and spot-check `/tickets/{name}/matches` for known Duplicate Cluster members (both `-H "Authorization: Bearer $API_KEY"`), same shape as Phase 1's verification.

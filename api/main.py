@@ -9,11 +9,12 @@ from __future__ import annotations
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException
 from redis import Redis
 from rq import Queue
 
 import config
+from api.auth import require_api_key
 from db.cache import MatchCache
 from ingestion.webhook_handler import create_webhook_router, prepare_doc_for_indexing
 from retrieval.indexing import index_ticket
@@ -53,7 +54,7 @@ async def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
-@app.post("/ingest/full")
+@app.post("/ingest/full", dependencies=[Depends(require_api_key)])
 async def ingest_full() -> dict[str, int]:
     pipeline = app.state.pipeline
     queue: Queue = app.state.queue
@@ -68,12 +69,7 @@ async def ingest_full() -> dict[str, int]:
     return {"indexed": len(tickets)}
 
 
-@app.get("/tickets/queryable")
-async def queryable_tickets() -> list[dict]:
-    return app.state.pipeline.helpdesk_client.list_open_tickets()
-
-
-@app.get("/tickets/{ticket_name}/matches")
+@app.get("/tickets/{ticket_name}/matches", dependencies=[Depends(require_api_key)])
 async def get_matches(ticket_name: str) -> list[dict]:
     match_cache: MatchCache = app.state.match_cache
 

@@ -15,8 +15,7 @@ flowchart LR
     WORKER --> PG[("Postgres<br/>ticket_matches_cache")]
     PG --> RET["Retrieval<br/>cache-aside"]
     HD -->|"Query Ticket — sync"| RET
-    RET -->|"Matches — sync"| DEMOUI["Demo UI"]
-    RET -->|"Matches — sync, HTTP"| BRIDGE["Frappe bridge<br/>get_recent_similar_tickets() override"]
+    RET -->|"Matches — sync, HTTP, API-key gated"| BRIDGE["Frappe bridge<br/>get_recent_similar_tickets() override"]
     BRIDGE --> HDUI["Helpdesk agent UI"]
 ```
 
@@ -24,7 +23,7 @@ Solid arrows are synchronous: the caller blocks until it gets a response. Dashed
 
 Indexing keeps Qdrant current and, via the enqueued refresh, keeps the Match cache current. Retrieval only ever reads — from the cache first, from the live pipeline only to populate a ticket's very first cache row. There is no generation step anywhere in the pipeline. A Match is a past Ticket Record surfaced as-is, not a generated answer.
 
-Two consumers hit the identical cache-backed endpoint: the standalone demo UI, and Helpdesk's own agent ticket view via a small Frappe app (`frappe_bridge/ticket_match_bridge/`) that overrides Helpdesk's stubbed `get_recent_similar_tickets()`. Neither is stale relative to the other, and nothing about retrieval, the cache, or the worker changes for the second consumer — see [Helpdesk-native UI](#helpdesk-native-ui) below.
+The one consumer of this endpoint is Helpdesk's own agent ticket view, via a small Frappe app ([`ticket-match-bridge`](https://github.com/arunjoyt/ticket-match-bridge), ADR 0008) that overrides Helpdesk's stubbed `get_recent_similar_tickets()` — see [Helpdesk-native UI](#helpdesk-native-ui) below. A standalone Streamlit demo UI existed earlier in this project but was retired (ADR 0010) once it was clear its only role was demoing the same endpoint Helpdesk's own agent UI already surfaces.
 
 ## Pipeline
 
@@ -59,15 +58,11 @@ flowchart TB
     end
 
     subgraph RET["Retrieval · api/main.py, cache-aside"]
+        AUTH{"api/auth.py<br/>require_api_key"}
         Q["GET /tickets/{name}/matches"]
         LOOKUP{"row exists for<br/>this ticket?"}
         LIVE["compute_matches()<br/>embed → hybrid search → rerank → gate<br/>only on true miss"]
         UPSERT["upsert cache row,<br/>stamp computed_at"]
-    end
-
-    subgraph UI["Demo UI · Streamlit"]
-        PICK["Pick Query Ticket"]
-        CARDS["Render Match cards"]
     end
 
     subgraph BRIDGE["Frappe bridge app · ticket_match_bridge"]
@@ -95,9 +90,9 @@ flowchart TB
     TASK -- "recompute per ticket, same pipeline as LIVE — sync" --> QDRANT
     TASK -- "upsert, stamp computed_at" --> CACHE
 
-    PICK --> Q
     HDUI -- "resource call — sync" --> OVERRIDE
-    OVERRIDE -- "GET .../matches — sync, HTTP" --> Q
+    OVERRIDE -- "GET .../matches<br/>Authorization: Bearer — sync, HTTP" --> AUTH
+    AUTH -- "valid key" --> Q
     Q --> LOOKUP
     LOOKUP -- "yes — serve as-is,<br/>even if stale" --> CACHE
     CACHE -- "cached Matches — sync" --> Q
@@ -109,7 +104,6 @@ flowchart TB
     LIVE --> UPSERT
     UPSERT --> CACHE
     UPSERT --> Q
-    Q -- "Matches — sync" --> CARDS
     Q -- "Matches — sync" --> OVERRIDE
     OVERRIDE -- "{recent_tickets, similar_tickets} — sync" --> HDUI
 ```
@@ -134,6 +128,10 @@ Both call `index_ticket()` / `deindex_ticket()` (`retrieval/indexing.py`, ADR 00
 
 Staleness is accepted, not bounded — there is no version check and no time-based refresh; a cached row is only as fresh as the last time some corpus change happened to trigger a sweep. See ADR 0007 for the full reasoning.
 
+### API-key auth
+
+`POST /ingest/full` and `GET /tickets/{name}/matches` require `Authorization: Bearer <API_KEY>` (`api/auth.py`, ADR 0009). Every caller of this API is a trusted backend or operator, not an individual end user with a login — the Frappe bridge app, and whoever runs `/ingest/full` by hand — so a single shared key checked with `hmac.compare_digest` matches the trust model, the same shape as `WEBHOOK_SECRET`'s HMAC check. Fails closed: an unset `API_KEY` rejects every protected request, never falls open. Two routes stay exempt: `GET /health` (uptime checks) and `POST /webhook/helpdesk`, which already has its own HMAC-SHA256 auth and doesn't need a second mechanism layered on top.
+
 ### Retrieval and the gate
 
 A query embeds the same way a document does, both dense and sparse. Qdrant fuses the two candidate sets with RRF fusion before the cross-encoder sees them (`retrieval/vector_store.py`). Fusion rank builds the candidate pool. It is not a cross-query-comparable confidence value.
@@ -142,7 +140,7 @@ The Match Threshold gates on the reranker's score instead (`retrieval/reranker.p
 
 ### Helpdesk-native UI
 
-Helpdesk ships a "Recent / Similar Tickets" section end-to-end in its own frontend — the Vue component, the `useTicket.ts` composable's `recentSimilarTickets` resource, the `{recent_tickets, similar_tickets}` contract — but its backend, `get_recent_similar_tickets()`, hardcodes `similar_tickets = []`. `frappe_bridge/ticket_match_bridge/` overrides that one whitelisted method via Frappe's `override_whitelisted_methods` hook (ADR 0006). The override reuses Helpdesk's own `get_recent_tickets()` unchanged for the `recent_tickets` half, and for `similar_tickets` calls this project's own `GET /tickets/{ticket_name}/matches` — the same cache-aside endpoint the demo UI calls — then enriches each Match with `status`/`priority`/`creation` via one `frappe.get_all` call. Those three fields are Frappe-owned ticket metadata the retrieval API has no reason to know about (CONTEXT.md: Match); `resolution_details` comes back as HTML from the API and is stripped to plain text (`frappe.utils.strip_html_tags`) before reaching the frontend, since the Vue list item renders it as a plain-text snippet, not HTML.
+Helpdesk ships a "Recent / Similar Tickets" section end-to-end in its own frontend — the Vue component, the `useTicket.ts` composable's `recentSimilarTickets` resource, the `{recent_tickets, similar_tickets}` contract — but its backend, `get_recent_similar_tickets()`, hardcodes `similar_tickets = []`. `frappe_bridge/ticket_match_bridge/` overrides that one whitelisted method via Frappe's `override_whitelisted_methods` hook (ADR 0006). The override reuses Helpdesk's own `get_recent_tickets()` unchanged for the `recent_tickets` half, and for `similar_tickets` calls this project's own `GET /tickets/{ticket_name}/matches`, `Authorization` header included — then enriches each Match with `status`/`priority`/`creation` via one `frappe.get_all` call. Those three fields are Frappe-owned ticket metadata the retrieval API has no reason to know about (CONTEXT.md: Match); `resolution_details` comes back as HTML from the API and is stripped to plain text (`frappe.utils.strip_html_tags`) before reaching the frontend, since the Vue list item renders it as a plain-text snippet, not HTML.
 
 A failure calling this project's API (down, timeout) is caught and logged, returning an empty `similar_tickets` list rather than a 500 — a hiccup in retrieval degrades this one panel, not the whole ticket view. The one Vue change is a single added paragraph in `TicketDetailsTab.vue`'s list-item template showing the resolution snippet, gated on the field being present — without it, an agent still has to open the matched ticket to see the fix, defeating CONTEXT.md's actual point.
 
@@ -153,6 +151,7 @@ This app's source lives in its own repo, [`arunjoyt/ticket-match-bridge`](https:
 | Concern | File |
 | --- | --- |
 | API routes, app lifecycle | `api/main.py` |
+| API-key auth | `api/auth.py` |
 | Shared retrieve → rerank → filter pipeline, pipeline object graph | `retrieval/matching.py` |
 | Index mutation choke point, deduplicated refresh enqueue | `retrieval/indexing.py` |
 | Helpdesk REST client | `ingestion/helpdesk_client.py` |
@@ -164,5 +163,4 @@ This app's source lives in its own repo, [`arunjoyt/ticket-match-bridge`](https:
 | Match cache (Postgres) | `db/cache.py`, `db/schema.sql` |
 | Background refresh worker | `worker/tasks.py`, `worker/run.py` |
 | Helpdesk-native UI bridge | [`ticket-match-bridge`](https://github.com/arunjoyt/ticket-match-bridge) (separate repo), `frappe_bridge/helpdesk-vue-patch/` |
-| Demo UI | `ui/app.py` |
-| Model names, Match Threshold, URLs, `DATABASE_URL`/`REDIS_URL` | `config.py` |
+| Model names, Match Threshold, URLs, `DATABASE_URL`/`REDIS_URL`/`API_KEY` | `config.py` |
