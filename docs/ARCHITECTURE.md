@@ -146,7 +146,7 @@ Helpdesk ships a "Recent / Similar Tickets" section end-to-end in its own fronte
 
 A failure calling this project's API (down, timeout) is caught and logged, returning an empty `similar_tickets` list rather than a 500 — a hiccup in retrieval degrades this one panel, not the whole ticket view. The one Vue change is a single added paragraph in `TicketDetailsTab.vue`'s list-item template showing the resolution snippet, gated on the field being present — without it, an agent still has to open the matched ticket to see the fix, defeating CONTEXT.md's actual point.
 
-This app's source lives in `frappe_bridge/ticket_match_bridge/` in this repo; installed onto the Helpdesk bench separately (`pip install -e` + `sites/apps.txt`, since `bench get-app` expects a git remote for a local path in this bench version — see ADR 0006's Verification section). The Vue edit itself lives inside the Helpdesk app's own source, which is not part of this repo — `frappe_bridge/helpdesk-vue-patch/` keeps a durable copy of the two edited files so the change survives even if the dev instance is recreated.
+This app's source lives in its own repo, [`arunjoyt/ticket-match-bridge`](https://github.com/arunjoyt/ticket-match-bridge) — split out from this monorepo (ADR 0008) once it turned out `bench get-app`'s failure against a local path (noted in ADR 0006's Verification section) wasn't a bench-version quirk but the actual root cause: `bench get-app` clones a git repo, and a subfolder sharing this monorepo's `.git` isn't one. Installed the standard way: `bench get-app https://github.com/arunjoyt/ticket-match-bridge && bench --site <site> install-app ticket_match_bridge`. The Vue edit itself lives inside the Helpdesk app's own source, which is not part of this repo — `frappe_bridge/helpdesk-vue-patch/` keeps a durable copy of the two edited files so the change survives even if the dev instance is recreated.
 
 ## Key files
 
@@ -163,6 +163,6 @@ This app's source lives in `frappe_bridge/ticket_match_bridge/` in this repo; in
 | Cross-encoder rerank | `retrieval/reranker.py` |
 | Match cache (Postgres) | `db/cache.py`, `db/schema.sql` |
 | Background refresh worker | `worker/tasks.py`, `worker/run.py` |
-| Helpdesk-native UI bridge | `frappe_bridge/ticket_match_bridge/`, `frappe_bridge/helpdesk-vue-patch/` |
+| Helpdesk-native UI bridge | [`ticket-match-bridge`](https://github.com/arunjoyt/ticket-match-bridge) (separate repo), `frappe_bridge/helpdesk-vue-patch/` |
 | Demo UI | `ui/app.py` |
 | Model names, Match Threshold, URLs, `DATABASE_URL`/`REDIS_URL` | `config.py` |
