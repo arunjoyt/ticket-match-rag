@@ -21,12 +21,8 @@ import uuid
 from qdrant_client import QdrantClient
 from qdrant_client.http.models import (
     Distance,
-    FieldCondition,
-    Filter,
-    FilterSelector,
     Fusion,
     FusionQuery,
-    MatchValue,
     Modifier,
     PointStruct,
     Prefetch,
@@ -77,15 +73,22 @@ class VectorStore:
         )
         self._client.upsert(collection_name=self._collection, points=[point])
 
-    def delete_by_ticket_name(self, ticket_name: str) -> None:
-        self._client.delete(
-            collection_name=self._collection,
-            points_selector=FilterSelector(
-                filter=Filter(
-                    must=[FieldCondition(key="ticket_name", match=MatchValue(value=ticket_name))]
-                )
-            ),
+    def delete_by_ticket_name(self, ticket_name: str) -> bool:
+        """Delete the ticket's point if it exists. Returns whether one was there
+        -- lets deindex_ticket() skip marking the Match cache stale when nothing
+        actually changed in the index (ADR 0011)."""
+        pid = point_id(ticket_name)
+        existed = bool(
+            self._client.retrieve(
+                collection_name=self._collection,
+                ids=[pid],
+                with_payload=False,
+                with_vectors=False,
+            )
         )
+        if existed:
+            self._client.delete(collection_name=self._collection, points_selector=[pid])
+        return existed
 
     def hybrid_search(self, dense_vector: list[float], sparse_vector: SparseVector, top_k: int) -> list[dict]:
         response = self._client.query_points(

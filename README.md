@@ -18,7 +18,7 @@ part of the pipeline:
 | Precision gate (cross-encoder + Match Threshold) | *"VPN takes 5+ minutes to establish a connection after the update"* reuses the VPN cluster's trigger words but describes a different failure mode — it is **not** shown |
 | Grounded refusal (no filler) | when nothing clears the threshold the panel shows fewer than five Matches, or none — never a low-confidence Match just to fill the row |
 | Resolution surfaced directly | every Match carries its Resolution Summary, so the agent never opens the original ticket to find the fix |
-| Incremental indexing | a ticket gains a `resolution_details` value → Frappe webhook → indexed and eligible as a Match within one background refresh sweep |
+| Incremental indexing | a ticket gains a `resolution_details` value → Frappe webhook → indexed and eligible as a Match; cached rows are flagged stale and reconciled on their next read |
 
 See [CONTEXT.md](CONTEXT.md) for the domain model (Ticket, Match, Root-Cause Similarity, Match
 Threshold, Duplicate Cluster, Distractor).
@@ -38,38 +38,38 @@ flowchart LR
         IDX["indexing choke point<br/>index_ticket / deindex_ticket"]
         MATCHES["GET /tickets/{name}/matches<br/>API-key gated, cache-aside"]
         LIVE["compute_matches()<br/>embed → hybrid search → rerank → gate"]
+        BGT["BackgroundRefresher<br/>single-ticket refresh, in-process"]
     end
 
     QD[(Qdrant<br/>dense + bm25 named vectors)]
-    PG[(Postgres<br/>ticket_matches_cache)]
-    RQ[(Redis · RQ broker)]
-    WORKER["Worker (RQ SimpleWorker)<br/>refresh every open ticket"]
+    PG[(Postgres<br/>ticket_matches_cache · stale flag)]
 
     HD -- "REST: list / get tickets" --> INGEST
     HD -. "webhook on_update / on_trash" .-> HOOK
     INGEST --> IDX
     HOOK --> IDX
     IDX -- "idempotent uuid5 upsert — sync" --> QD
-    IDX -. "enqueue refresh — async, deduplicated" .-> RQ
-    RQ -. "consume" .-> WORKER
-    WORKER -- "same compute_matches() as LIVE" --> QD
-    WORKER -- "upsert, stamp computed_at" --> PG
+    IDX -- "UPDATE … SET stale = true — sync" --> PG
+    HOOK -. "new Query Ticket → populate — async" .-> BGT
 
     HDUI --> BRIDGE
     BRIDGE -- "Bearer API_KEY" --> MATCHES
-    MATCHES -- "row exists → serve as-is, even if stale" --> PG
+    MATCHES -- "row exists → serve as-is, fresh or stale" --> PG
     MATCHES -- "true miss → run live, then cache" --> LIVE
+    MATCHES -. "stale hit → refresh this ticket — async" .-> BGT
+    BGT --> LIVE
     LIVE --> QD
 ```
 
 The subgraph is execution order, not code layout. **Every Qdrant mutation goes through one choke
-point** (`retrieval/indexing.py`), which also enqueues a background refresh of the Postgres Match
-cache. **Reads are cache-aside**: a `GET /tickets/{name}/matches` request is served from the cache
-whenever a row exists — no freshness check, staleness accepted (ADR 0007) — and only runs the live
-`embed → hybrid search → rerank → gate` pipeline on a true miss. The RQ worker keeps cached rows
-current by recomputing Matches for *every* open ticket on each corpus change (a newly-resolved
-ticket can become a better Match for any open ticket, so it is a full sweep, not targeted
-invalidation), using the exact same `compute_matches()` the live path uses.
+point** (`retrieval/indexing.py`), which also flags every Match-cache row stale with a single
+`UPDATE` (ADR 0011). **Reads are cache-aside**: a `GET /tickets/{name}/matches` request is served
+from the cache whenever a row exists, fresh or stale (ADR 0007), and only runs the live
+`embed → hybrid search → rerank → gate` pipeline on a true miss. A read that hits a stale row serves
+it as-is and schedules a single-ticket background refresh (a FastAPI background task, in the API
+process) so the *next* read of that ticket is fresh — one ticket at a time, driven by reads, no
+sweep and no separate worker. A brand-new Query Ticket gets the same single-ticket populate from
+the webhook handler, so a first agent open is a cache hit rather than a cold compute.
 
 The one consumer of the API is Helpdesk's own agent ticket view, via a small Frappe app
 ([`ticket-match-bridge`](https://github.com/arunjoyt/ticket-match-bridge), ADR 0006/0008) that
@@ -87,8 +87,8 @@ for the full data flow and [docs/PERFORMANCE.md](docs/PERFORMANCE.md) for measur
 | Sparse | `SPARSE_MODEL`, default `Qdrant/bm25` (fastembed) — asymmetric doc/query encode |
 | Re-ranker | `RERANK_MODEL`, default `cross-encoder/stsb-roberta-base` — sentence-pair semantic equivalence, chosen over an ms-marco cross-encoder (ADR 0004) |
 | LLM | **none** — retrieve-and-surface, no generation step anywhere |
-| Match cache | Postgres (`ticket_matches_cache`) — ADR 0006/0007 |
-| Background compute | RQ (`SimpleWorker`, models stay resident) on Redis |
+| Match cache | Postgres (`ticket_matches_cache`, `stale` flag) — ADR 0006/0007/0011 |
+| Background compute | in-process FastAPI background tasks — single-ticket refresh, deduped (ADR 0011) |
 | Evaluation | `ranx` — recall@20 / precision@5 / MRR / nDCG@5, sliced by query variant (ADR 0003) |
 | API | FastAPI, single shared API key (`Authorization: Bearer`, ADR 0009) |
 | Helpdesk UI | Frappe bridge app overriding `get_recent_similar_tickets()` + one Vue snippet edit |
@@ -106,17 +106,15 @@ ticket-match-rag/
 │   ├── vector_store.py          # Qdrant collection, upsert, delete, RRF fusion query
 │   ├── hybrid_search.py         # Dense + sparse fused candidate pool
 │   ├── reranker.py              # Cross-encoder rerank, returns scores (Match Threshold gates on them)
-│   ├── matching.py              # Shared embed → search → rerank → gate pipeline + object graph
-│   └── indexing.py              # index_ticket() / deindex_ticket() — the one Qdrant-mutation choke point
+│   ├── matching.py              # Shared embed → search → rerank → gate pipeline + single-ticket refresh
+│   └── indexing.py              # index_ticket() / deindex_ticket() — Qdrant-mutation choke point + mark_all_stale()
 ├── api/
 │   ├── main.py                  # FastAPI app: /health, /ingest/full, /tickets/{name}/matches, webhook router
-│   └── auth.py                  # require_api_key — single shared key, hmac.compare_digest, fails closed
-├── worker/
-│   ├── tasks.py                 # refresh_all_open_tickets_cache() — full sweep on every corpus change
-│   └── run.py                   # RQ SimpleWorker entry point (models stay loaded across jobs)
+│   ├── auth.py                  # require_api_key — single shared key, hmac.compare_digest, fails closed
+│   └── refresh.py               # BackgroundRefresher — in-process single-ticket refresh, dedup by ticket name
 ├── db/
-│   ├── cache.py                 # MatchCache — Postgres get/put/delete
-│   └── schema.sql               # ticket_matches_cache (ticket_name PK, matches JSONB, computed_at)
+│   ├── cache.py                 # MatchCache — Postgres get/put/mark_all_stale/delete
+│   └── schema.sql               # ticket_matches_cache (ticket_name PK, matches JSONB, stale, computed_at)
 ├── eval/
 │   ├── dataset.py               # Builds queries / qrels / near-miss lookups from data/seed_manifest.json
 │   └── run.py                   # ranx runner — retrieval-stage vs. final-stage metrics + distractor leakage
@@ -124,7 +122,7 @@ ticket-match-rag/
 │   ├── seed_helpdesk.py         # Seeds synthetic Duplicate Clusters + Distractors, writes seed_manifest.json
 │   ├── calibrate_threshold.py   # Sweeps MATCH_THRESHOLD, optimizes F0.5 against the seeded score distribution
 │   ├── register_webhook.py      # Registers the two Frappe Webhook records (on_update, on_trash)
-│   └── stress_test.py           # Latency / concurrency / worker-sweep projection (docs/PERFORMANCE.md)
+│   └── stress_test.py           # Latency / concurrency / background-refresh cost (docs/PERFORMANCE.md)
 ├── frappe_bridge/
 │   ├── README.md                # Where the bridge app lives (its own repo) and why
 │   └── helpdesk-vue-patch/      # Durable copy of the two hand-edited Helpdesk Vue files
@@ -138,14 +136,14 @@ ticket-match-rag/
 │   ├── DEPLOYMENT.md            # Executed production reference (Part B — AWS EC2)
 │   ├── DEPLOYMENT_PLAN.md       # The plan that preceded DEPLOYMENT.md (Part A — Helpdesk on Contabo)
 │   ├── PROPOSED_ARCHITECTURE.md # Retired stub — everything it proposed is now built
-│   └── adr/                     # 0001–0010 — decision record, history not living docs
+│   └── adr/                     # 0001–0011 — decision record, history not living docs
 ├── nginx/
 │   ├── nginx.conf               # Base reverse-proxy config
 │   └── templates/
 │       └── ticket-match-rag.conf.template  # envsubst template for API_DOMAIN
 ├── config.py                    # Central env-var config — model names, MATCH_THRESHOLD, URLs, secrets
-├── docker-compose.yml           # Base infra: qdrant, postgres, redis (all loopback-bound)
-├── docker-compose.prod.yml      # Production overlay: adds app, worker, nginx + restart policies
+├── docker-compose.yml           # Base infra: qdrant, postgres (loopback-bound)
+├── docker-compose.prod.yml      # Production overlay: adds app, nginx + restart policies
 ├── Dockerfile
 ├── requirements.txt
 ├── .env.example
@@ -161,16 +159,15 @@ Prerequisites: a local Frappe Helpdesk instance (Docker), Docker Compose, and [u
    `API_KEY` to random values (`openssl rand -hex 32`).
 2. Start infrastructure:
    ```bash
-   docker compose up -d          # qdrant, postgres, redis
+   docker compose up -d          # qdrant, postgres
    ```
 3. Create the venv and install dependencies:
    ```bash
    uv venv && uv pip install -r requirements.txt
    ```
-4. Start the API and the worker (separate shells):
+4. Start the API:
    ```bash
    uv run uvicorn api.main:app --reload
-   uv run python -m worker.run
    ```
 5. Seed the Helpdesk instance and run a full ingest:
    ```bash
@@ -207,7 +204,7 @@ short version:
    ```bash
    docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
    ```
-   Only nginx binds public ports (80/443); qdrant/postgres/redis stay loopback-only.
+   Only nginx binds public ports (80/443); qdrant/postgres stay loopback-only.
 5. Run the initial full ingest (`POST /ingest/full`) — webhooks only cover changes made after
    they are registered.
 
@@ -221,7 +218,7 @@ See `.env.example` for the full list. Key groups:
 | Webhook | `WEBHOOK_SECRET` | HMAC-SHA256 signature verification on `/webhook/helpdesk` — fails closed if unset |
 | API auth | `API_KEY` | Single shared key for `/ingest/full` and `/tickets/{name}/matches` (ADR 0009) — fails closed if unset |
 | Qdrant | `QDRANT_URL`, `QDRANT_COLLECTION` | Vector store |
-| Cache / broker | `DATABASE_URL`, `REDIS_URL` | Postgres Match cache and RQ broker |
+| Match cache | `DATABASE_URL` | Postgres `ticket_matches_cache` |
 | Models | `EMBEDDING_MODEL`, `RERANK_MODEL`, `SPARSE_MODEL` | Local models, loaded in-process; defaults in `config.py` |
 | Match Threshold | `MATCH_THRESHOLD` | Reranker-score gate; calibrated per model + corpus (`scripts/calibrate_threshold.py`) — meaningless for a different `RERANK_MODEL` |
 | Webhook target | `API_WEBHOOK_URL` | Where `scripts/register_webhook.py` points Helpdesk (local dev: `host.docker.internal`) |
@@ -246,7 +243,7 @@ alongside a Match but is never embedded (CONTEXT.md: Match).
 1. Verifies the HMAC-SHA256 signature (`X-Frappe-Webhook-Signature`), failing closed if `WEBHOOK_SECRET` is unset.
 2. Refetches the full ticket via the Helpdesk REST API.
 3. Re-indexes it if still eligible (non-empty `resolution_details`), or deletes its Qdrant point if it was trashed or made ineligible.
-4. Enqueues a deduplicated Match-cache refresh — a burst of events collapses into one pending sweep.
+4. On any real index change, flags every Match-cache row stale (one `UPDATE`); reads reconcile them one ticket at a time (ADR 0011). A brand-new Query Ticket gets a single-ticket cache populate scheduled here.
 
 ## Evaluation
 
@@ -276,12 +273,15 @@ evaluator-facing view and [docs/PERFORMANCE.md](docs/PERFORMANCE.md) for methodo
 
 | Path | Time |
 |---|---|
-| Repeat lookup (cached row) | ~10 ms |
-| First-time lookup (live pipeline) | ~0.3–0.6 s — ~90% in the cross-encoder rerank |
-| Worker re-score | ~40 ms per ticket |
+| Cached lookup, fresh or stale (Postgres) | ~10 ms |
+| True miss (live pipeline) | ~0.3–0.6 s — ~90% in the cross-encoder rerank |
+| One background refresh | ~0.3 s per ticket |
+| `POST /ingest/full` re-index | ~40 ms per ticket |
 
-The service runs as one process by default; a cache-miss request blocks it for the full pipeline
+The service runs as one process by default; a true-miss request blocks it for the full pipeline
 duration (`requests`, `sentence-transformers`, `qdrant-client`, `psycopg2` are all synchronous —
-`async def` is a FastAPI convention here, not concurrency). In normal use the background sweep keeps
-recently active tickets pre-scored, so most agent traffic hits the fast path. Tested against a
+`async def` is a FastAPI convention here, not concurrency). In normal use a ticket's row is
+populated on creation and served on every read, so most agent traffic hits the fast path. Numbers
+above were measured against the pre-ADR-0011 design (RQ worker); the read-path costs carry over,
+but the lazy-revalidation load shape has not been re-measured (issue #18). Tested against a
 67-ticket corpus on an M1 laptop — a small validation run, not a production-scale test.

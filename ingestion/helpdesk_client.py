@@ -40,11 +40,6 @@ class HelpdeskClient:
         tickets = self._list_all_tickets()
         return [t for t in tickets if t.get("resolution_details")]
 
-    def list_open_tickets(self) -> list[dict]:
-        """Unresolved tickets -- what the worker's refresh sweep recomputes Matches for."""
-        tickets = self._list_all_tickets()
-        return [t for t in tickets if not t.get("resolution_details")]
-
     def _list_all_tickets(self) -> list[dict]:
         tickets: list[dict] = []
         start = 0

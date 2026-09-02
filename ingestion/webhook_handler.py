@@ -1,10 +1,13 @@
 """Incremental re-indexing via Frappe webhooks.
 
-POST /webhook/helpdesk -- verifies HMAC-SHA256 signature, fetches the
-updated ticket, deletes its existing Qdrant point, and re-indexes if still
-eligible. If the ticket no longer exists (HD Ticket was trashed), deletes
-the Qdrant point and stops there -- see ADR 0005's "Known limitation"
-section, since fixed: on_trash is now registered alongside on_update.
+POST /webhook/helpdesk -- verifies HMAC-SHA256 signature, fetches the updated
+ticket, and either re-indexes it (still eligible) or drops its Qdrant point
+(no longer eligible, or the HD Ticket was trashed -- 404). on_trash is
+registered alongside on_update; see ADR 0005's since-fixed "Known limitation".
+
+For an ineligible ticket with no cached Matches yet -- a brand-new Query
+Ticket -- the handler schedules a single-ticket cache populate (ADR 0011), so
+the first agent to open it gets a cache hit instead of a cold live compute.
 
 Fails closed: if WEBHOOK_SECRET is unset, requests are rejected outright,
 never validated against an empty-string key. See
@@ -27,10 +30,11 @@ import hashlib
 import hmac
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
 from requests.exceptions import HTTPError
-from rq import Queue
 
+from api.refresh import BackgroundRefresher
+from db.cache import MatchCache
 from ingestion.embedder import Embedder, SparseEmbedder, SparseVector, match_text
 from ingestion.helpdesk_client import HelpdeskClient
 from retrieval.indexing import deindex_ticket, index_ticket
@@ -72,13 +76,14 @@ def create_webhook_router(
     embedder: Embedder,
     sparse_embedder: SparseEmbedder,
     vector_store: VectorStore,
-    queue: Queue,
+    cache: MatchCache,
+    refresher: BackgroundRefresher,
     webhook_secret: str | None,
 ) -> APIRouter:
     router = APIRouter()
 
     @router.post("/webhook/helpdesk")
-    async def handle_webhook(request: Request) -> dict[str, Any]:
+    async def handle_webhook(request: Request, background_tasks: BackgroundTasks) -> dict[str, Any]:
         body = await request.body()
         verify_signature(body, request.headers.get(SIGNATURE_HEADER), webhook_secret)
 
@@ -91,17 +96,22 @@ def create_webhook_router(
             ticket = helpdesk_client.get_ticket(ticket_name)
         except HTTPError as exc:
             if exc.response is not None and exc.response.status_code == 404:
-                deindex_ticket(ticket_name, vector_store, queue)
+                deindex_ticket(ticket_name, vector_store, cache)
                 return {"status": "deleted", "ticket_name": ticket_name}
             raise
 
-        deindex_ticket(ticket_name, vector_store, queue)
-
         if ticket.get("resolution_details"):
             dense_vector, sparse_vector, doc_payload = prepare_doc_for_indexing(ticket, embedder, sparse_embedder)
-            index_ticket(ticket_name, dense_vector, sparse_vector, doc_payload, vector_store, queue)
+            # upsert overwrites the ticket's one deterministic point, so no delete-first
+            index_ticket(ticket_name, dense_vector, sparse_vector, doc_payload, vector_store, cache)
             return {"status": "indexed", "ticket_name": ticket_name}
 
+        # Ineligible: a Query Ticket, or a resolution that was cleared. Drop any
+        # existing point; if the ticket has no cached Matches yet, populate its
+        # row now rather than making the first agent open pay a cold live compute.
+        deindex_ticket(ticket_name, vector_store, cache)
+        if cache.get(ticket_name) is None:
+            refresher.schedule(background_tasks, ticket_name)
         return {"status": "removed", "ticket_name": ticket_name}
 
     return router

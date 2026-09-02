@@ -36,9 +36,9 @@ MATCH_THRESHOLD = float(os.environ.get("MATCH_THRESHOLD", "0.6221"))
 QDRANT_URL = os.environ.get("QDRANT_URL", "http://localhost:6333")
 QDRANT_COLLECTION = os.environ.get("QDRANT_COLLECTION", "tickets")
 
-# Match cache (ADR 0006/0007) and its RQ broker.
+# Match cache (ADR 0006/0007). ADR 0011 dropped the RQ worker and its Redis
+# broker -- refreshes now run as in-process FastAPI background tasks.
 DATABASE_URL = os.environ.get("DATABASE_URL", "postgresql://ticket_match:ticket_match@localhost:5432/ticket_match")
-REDIS_URL = os.environ.get("REDIS_URL", "redis://localhost:6379/0")
 
 HELPDESK_URL = os.environ.get("HELPDESK_URL", "http://helpdesk.localhost:8000")
 HELPDESK_API_KEY = os.environ.get("HELPDESK_API_KEY")
