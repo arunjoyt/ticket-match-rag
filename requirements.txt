@@ -6,6 +6,4 @@ fastembed==0.8.0
 requests==2.32.3
 python-dotenv==1.0.1
 ranx==0.3.21
-rq==2.1.0
 psycopg2-binary==2.9.10
-redis==5.2.0

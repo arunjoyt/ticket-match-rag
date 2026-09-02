@@ -3,9 +3,9 @@
 Puts numbers on tradeoffs this project already reasoned about but never
 measured: docs/ARCHITECTURE.md notes every route is `async def` but nothing
 actually `await`s, so a cache-miss request blocks the whole process -- this
-measures how much. ADR 0006 accepts worker/tasks.py's full-sweep refresh as
-a scaling ceiling "fine at this project's scale" -- this projects what that
-ceiling actually is.
+measures how much. ADR 0011 makes cache-refresh work proportional to reads
+(one single-ticket compute per stale row observed) -- this measures that
+per-refresh cost.
 
 Five things, each printed as its own section:
   1. Single-request cache-hit vs. cache-miss latency (cache-miss forced by
@@ -15,10 +15,10 @@ Five things, each printed as its own section:
      throughput at each level.
   3. Component breakdown of one cache-miss call: embed vs. Qdrant search vs.
      cross-encoder rerank, via direct Python calls (not HTTP) using the same
-     Pipeline retrieval/matching.py builds for the API and the worker.
-  4. Worker-sweep projection: mean single-ticket compute_matches() cost,
-     projected out to open-ticket counts beyond today's actual corpus size --
-     a labeled projection, not a live run against inflated Helpdesk data.
+     Pipeline retrieval/matching.py builds for the API.
+  4. Background-refresh catch-up cost: mean single-ticket compute_matches()
+     cost, and the cumulative cost of reconciling N stale rows -- amortized
+     across N reads over time (ADR 0011), not a burst like ADR 0006's sweep.
   5. N-agents-at-once, cold cache: the realistic worst case behind section
      2's synthetic ramp -- what a burst of agents actually experiences,
      split into "many requests over a handful of shared uncached tickets"
@@ -95,9 +95,9 @@ def main() -> None:
 
     print()
     print("=" * 70)
-    print("4. Worker-sweep projection")
+    print("4. Background-refresh catch-up cost")
     print("=" * 70)
-    _report_sweep_projection(per_ticket_seconds)
+    _report_refresh_cost(per_ticket_seconds)
 
     print()
     print("=" * 70)
@@ -228,11 +228,12 @@ def _timed_batch(label: str, urls: list[str], headers: dict) -> None:
         print(f"  per-request wait: min={ok_seconds[0]:.2f}s median={mid:.2f}s max={ok_seconds[-1]:.2f}s")
 
 
-def _report_sweep_projection(per_ticket_seconds: float) -> None:
-    print(f"Mean per-ticket compute_matches() cost: {per_ticket_seconds:.3f}s (from section 3, serial)")
-    print("Projected refresh_all_open_tickets_cache() wall-clock time (worker/tasks.py, serial full sweep):")
+def _report_refresh_cost(per_ticket_seconds: float) -> None:
+    print(f"Mean single-ticket refresh cost: {per_ticket_seconds:.3f}s (one compute_matches(), from section 3)")
+    print("Cumulative CPU to reconcile N stale rows after one index change (ADR 0011 --")
+    print("spread across N separate reads over time, one per process, not a burst):")
     for n in PROJECTED_OPEN_TICKET_COUNTS:
-        print(f"  {n:>4} open tickets: ~{per_ticket_seconds * n:.1f}s (~{per_ticket_seconds * n / 60:.1f} min)")
+        print(f"  {n:>4} stale rows: ~{per_ticket_seconds * n:.1f}s total (~{per_ticket_seconds * n / 60:.1f} min)")
 
 
 def _print_stats(label: str, seconds: list[float]) -> None:

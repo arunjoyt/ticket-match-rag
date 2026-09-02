@@ -11,9 +11,7 @@ Internet (443/80)
     └── Nginx
           └── ticket-match.<domain>  → FastAPI app (internal: 8000)
                   ├── Qdrant   (6333, loopback only)
-                  ├── Postgres (5432, loopback only) -- match cache
-                  └── Redis    (6379, loopback only) -- RQ broker
-                        └── worker (RQ SimpleWorker, no public port)
+                  └── Postgres (5432, loopback only) -- match cache
 
 Contabo VPS (separate host)
     └── helpdesk.22logic.com
@@ -21,13 +19,15 @@ Contabo VPS (separate host)
           └── Bridge app calls  https://ticket-match.<domain>/tickets/{name}/matches
 ```
 
-Only nginx binds a public port. Every other service stays on Docker's default bridge network, reachable by service name (`app`, `qdrant`, `postgres`, `redis`), with `qdrant`/`postgres`/`redis` also loopback-bound on the host per `docker-compose.yml`.
+Only nginx binds a public port. Every other service stays on Docker's default bridge network, reachable by service name (`app`, `qdrant`, `postgres`), with `qdrant`/`postgres` also loopback-bound on the host per `docker-compose.yml`.
+
+ADR 0011 removed the Redis broker and the RQ `worker` container that the first production deploy ran — cache refreshes now run inside the `app` process. Redeploying onto that box needs `docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build --remove-orphans` so the now-orphaned `redis` and `worker` containers are torn down.
 
 ## 1. Provision the instance
 
 1. Launch a `t3.medium` (2 vCPU / 4GB) instance, Ubuntu 22.04 LTS, 20GB gp3.
 2. Allocate an Elastic IP and associate it with the instance, so DNS survives a reboot or replacement.
-3. Set the security group to allow inbound 22 (SSH, restrict to your IP), 80, and 443 (0.0.0.0/0) only. Do not open 6333, 5432, or 6379 — the compose port bindings already keep them loopback-only, so this is a second layer, not the only one.
+3. Set the security group to allow inbound 22 (SSH, restrict to your IP), 80, and 443 (0.0.0.0/0) only. Do not open 6333 or 5432 — the compose port bindings already keep them loopback-only, so this is a second layer, not the only one.
 
 ## 2. DNS
 
@@ -57,7 +57,7 @@ Fill in `.env`:
 - `API_KEY` — generate with `openssl rand -hex 32` (ADR 0009). `api/auth.py` fails closed if this is unset — every protected route returns 500, not a silent bypass. The bridge app sends this same value as `Authorization: Bearer <key>`.
 - `API_DOMAIN=ticket-match.22logic.com` — bare hostname, no scheme. Drives `nginx/templates/ticket-match-rag.conf.template`.
 
-Leave `QDRANT_URL`, `DATABASE_URL`, and `REDIS_URL` as the `.env.example` defaults — `docker-compose.prod.yml` overrides them to the in-network service names (`qdrant`, `postgres`, `redis`) for the `app` and `worker` containers.
+Leave `QDRANT_URL` and `DATABASE_URL` as the `.env.example` defaults — `docker-compose.prod.yml` overrides them to the in-network service names (`qdrant`, `postgres`) for the `app` container.
 
 ## 5. TLS cert
 
@@ -69,7 +69,7 @@ sudo certbot certonly --standalone -d ticket-match.22logic.com
 
 ```bash
 docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
-docker compose -f docker-compose.yml -f docker-compose.prod.yml ps   # confirm all 6 services are up
+docker compose -f docker-compose.yml -f docker-compose.prod.yml ps   # confirm all 4 services are up
 ```
 
 ## 7. Initial full ingest
@@ -81,7 +81,7 @@ curl -X POST https://ticket-match.22logic.com/ingest/full \
   -H "Authorization: Bearer <API_KEY>"
 ```
 
-Watch progress with `docker compose -f docker-compose.yml -f docker-compose.prod.yml logs app worker -f`.
+Watch progress with `docker compose -f docker-compose.yml -f docker-compose.prod.yml logs app -f`.
 
 ## 8. Verify
 
@@ -102,9 +102,9 @@ Then, on the Helpdesk side (once Part A and the bridge app are wired up per `doc
   0 3 * * * certbot renew --quiet && docker compose -f /home/ubuntu/ticket-match-rag/docker-compose.yml -f /home/ubuntu/ticket-match-rag/docker-compose.prod.yml exec nginx nginx -s reload
   ```
 - **Deploys**: `git pull && docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build`.
-- **`.env` changes vs. code changes** — `env_file: .env` only loads at container start. A value change (rotating `API_KEY` or `WEBHOOK_SECRET`) needs `docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --force-recreate app worker`. A code change needs a rebuild (`--build`), since the Dockerfile bakes the source into the image with `COPY . .` — `--force-recreate` alone reuses the old image and keeps running the old code.
+- **`.env` changes vs. code changes** — `env_file: .env` only loads at container start. A value change (rotating `API_KEY` or `WEBHOOK_SECRET`) needs `docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --force-recreate app`. A code change needs a rebuild (`--build`), since the Dockerfile bakes the source into the image with `COPY . .` — `--force-recreate` alone reuses the old image and keeps running the old code.
 - Every service has `restart: unless-stopped`, so the stack comes back up on its own after a host reboot or a Docker daemon restart.
-- The Postgres match cache and the Qdrant index are both regenerable from Helpdesk data (`POST /ingest/full`, then the worker's own refresh job repopulates the cache), so neither needs a backup schedule the way the Contabo Helpdesk site's data does. An EBS snapshot of the instance is enough if you want a faster recovery path than a full re-ingest.
+- The Postgres match cache and the Qdrant index are both regenerable from Helpdesk data (`POST /ingest/full`, then reads repopulate cache rows on demand), so neither needs a backup schedule the way the Contabo Helpdesk site's data does. An EBS snapshot of the instance is enough if you want a faster recovery path than a full re-ingest.
 
 ## 10. Inspecting Qdrant / Postgres (SSH tunnel)
 

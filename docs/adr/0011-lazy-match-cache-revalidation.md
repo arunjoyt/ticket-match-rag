@@ -1,5 +1,5 @@
 ---
-status: proposed
+status: implemented
 ---
 
 # Lazy Match-cache revalidation: drop the full sweep, drop RQ
@@ -211,4 +211,34 @@ refetch if agents notice the lag.
 Not addressed here: the in-place panel refresh (deferred, see Considered alternatives); targeted
 invalidation (future ADR if scale demands it).
 
-**Status: proposed.**
+## Verification
+
+Implemented per the plan above (issue #18), with two refinements not in the original plan:
+
+- **`deindex_ticket()` marks the cache stale only when a point was actually removed.**
+  `VectorStore.delete_by_ticket_name()` now checks for the ticket's deterministic point and
+  returns whether it existed. A webhook for a never-indexed Query Ticket (the highest-frequency
+  event) therefore does not flip the whole cache stale — only real index changes do. The plan
+  had every choke-point call mark stale unconditionally.
+- **`api/main.py` wires this package's loggers to a handler at INFO** (`_wire_logging()` in the
+  lifespan). The app had no logging config, so the `logger.exception` on `BackgroundRefresher`'s
+  failure path — the safety net this design relies on — would otherwise have gone nowhere.
+
+Verified end-to-end against the local Docker Helpdesk bench (`ticket-rag-helpdesk-dev`,
+72 seeded HD Tickets: 67 Reusable, 5 open) with a throwaway Postgres and Qdrant, driving the real
+FastAPI app:
+
+1. `POST /ingest/full` indexes all 67 Reusable Tickets; no cache rows exist for the open ones yet.
+2. First `GET /tickets/{open}/matches` is a true miss — runs the live pipeline (~1.2 s cold), caches the row `stale = false`.
+3. Second `GET` for the same ticket is a ~15 ms cache hit.
+4. A webhook that re-indexes an existing Reusable Ticket flips every cache row to `stale = true` via one `UPDATE`; nothing is recomputed synchronously.
+5. A `GET` on a stale row returns the old Matches in ~11 ms (not a recompute) and schedules a background refresh; within a few seconds that row is back to `stale = false` with an advanced `computed_at`. A cached row for a ticket that was *not* read stays stale — no sweep.
+6. A webhook for an ineligible ticket with no cache row schedules a single-ticket populate; the row appears `stale = false` shortly after.
+7. Eight concurrent `GET`s on one stale ticket all serve fast (≤ ~120 ms, well under a warm recompute) and produce **exactly one** background refresh (in-process dedup, confirmed in the logs).
+8. A webhook for an ineligible, never-indexed ticket does **not** flip any cache row stale (the `delete_by_ticket_name` no-op is detected). A webhook for a non-existent ticket returns `{"status": "deleted"}` with no error. Bad webhook signature → 401; missing API key → 401; unknown ticket → 404.
+
+`docs/PERFORMANCE.md` / `docs/PERFORMANCE_SUMMARY.md` still carry their pre-0011 measured numbers
+(read-path costs unchanged) with a note that the lazy-revalidation load shape under concurrency is
+not yet re-measured — `scripts/stress_test.py` needs a fresh run for that, tracked in #18.
+
+**Status: implemented.**
