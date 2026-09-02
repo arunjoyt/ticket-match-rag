@@ -39,6 +39,7 @@ class BackgroundRefresher:
         background_tasks.add_task(self._run, ticket_name)
 
     def _run(self, ticket_name: str) -> None:
+        logger.info("background Match-cache refresh: %s", ticket_name)
         try:
             refresh_ticket_cache(ticket_name, self._pipeline, self._cache)
         except Exception:

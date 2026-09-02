@@ -10,6 +10,7 @@ single-ticket background refresh so the next read is fresh.
 
 from __future__ import annotations
 
+import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
@@ -24,8 +25,19 @@ from retrieval.indexing import index_ticket
 from retrieval.matching import build_pipeline, compute_matches
 
 
+def _wire_logging() -> None:
+    """Give this package's loggers a handler at INFO. The app has no other
+    logging config, so without this the background-refresh logs and failure
+    traces in api/refresh.py would not surface."""
+    pkg_logger = logging.getLogger("api")
+    pkg_logger.handlers = logging.getLogger("uvicorn").handlers or [logging.StreamHandler()]
+    pkg_logger.setLevel(logging.INFO)
+    pkg_logger.propagate = False
+
+
 @asynccontextmanager
 async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
+    _wire_logging()
     pipeline = build_pipeline()
     match_cache = MatchCache()
     match_cache.ensure_schema()
