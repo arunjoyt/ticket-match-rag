@@ -8,22 +8,28 @@ ranking quality.
 ## What It Does
 
 An agent opens a ticket in Frappe Helpdesk; a "Similar Tickets" panel shows the closest past
-Reusable Tickets, each with its Resolution Summary inline. Each row below exercises a different
-part of the pipeline:
-
-| Capability | Example |
-|---|---|
-| Lexical match (BM25 leg) | Query ticket *"VPN disconnects immediately after macOS update"* surfaces *"GlobalProtect drops with 'network unreachable' after the latest OS patch"* |
-| Semantic match, low lexical overlap (dense leg carries it alone) | *"corporate network client stops working every time a system patch lands"* still surfaces the VPN-crash cluster, with almost no shared vocabulary |
-| Precision gate (cross-encoder + Match Threshold) | *"VPN takes 5+ minutes to establish a connection after the update"* reuses the VPN cluster's trigger words but describes a different failure mode — it is **not** shown |
-| Grounded refusal (no filler) | when nothing clears the threshold the panel shows fewer than five Matches, or none — never a low-confidence Match just to fill the row |
-| Resolution surfaced directly | every Match carries its Resolution Summary, so the agent never opens the original ticket to find the fix |
-| Incremental indexing | a ticket gains a `resolution_details` value → Frappe webhook → indexed and eligible as a Match; cached rows are flagged stale and reconciled on their next read |
+Reusable Tickets, each with its Resolution Summary inline.
 
 See [CONTEXT.md](CONTEXT.md) for the domain model (Ticket, Match, Root-Cause Similarity, Match
 Threshold, Duplicate Cluster, Distractor).
 
 ## Architecture
+
+At a glance:
+
+```mermaid
+flowchart LR
+    HD[Frappe Helpdesk] -- "REST + webhooks" --> IDX[Index<br/>embed dense + BM25]
+    IDX --> QD[(Vector Store - <br/>Qdrant)]
+    Agent[Agent] --> UI[Helpdesk UI] --> BR[Bridge] --> API[[FastAPI]]
+    API -- "hit" --> CACHE[(Match cache - <br/>Postgres)]
+    API -- "miss" --> PIPE[Match pipeline<br/>embed → hybrid search → rerank → gate]
+    PIPE --> QD
+    CACHE & PIPE -- "matches + resolutions" --> API --> UI
+```
+
+
+And in detail:
 
 ```mermaid
 flowchart LR
